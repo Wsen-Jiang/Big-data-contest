@@ -41,7 +41,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # 训练模型
-num_epochs = 5
+num_epochs = 50
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model.to(device)
@@ -101,7 +101,7 @@ for epoch in range(num_epochs):
         if not os.path.exists(model_dir):
             os.makedirs(model_dir)
         # 然后保存模型
-        torch.save(model.state_dict(), os.path.join(model_dir, 'best_model.pth'))
+        torch.save(model.state_dict(), os.path.join(model_dir, f'{num_epochs}_best_model.pth'))
 torch.save(model.state_dict(), f'models/{model.__class__.__name__}/final_model.pth')
 
 show_plot(history_train_loss, history_valid_loss, save_loss_path + f"acc_{best_accuracy}_{model.__class__.__name__}.png")

@@ -53,7 +53,7 @@ def collate_fn(batch):
     return padded_sequences, lengths, labels
 
 # 指定根目录
-root_dir = 'Datasetroot'  # 请将此路径替换为您的数据集根目录
+root_dir = 'Dataset'  # 请将此路径替换为您的数据集根目录
 data_dirs = ['1', '2', '3', '4']
 
 # 读取所有数据

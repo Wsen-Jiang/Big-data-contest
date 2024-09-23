@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 
 from models.CNNRegressor import CNNRegressor
-from dataset import load_data_from_directories, WaveformDataset, collate_fn
+from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
@@ -30,6 +30,7 @@ if __name__ == "__main__":
     seq_train, seq_val, y_train, y_val = train_test_split(
         sequences, labels, test_size=0.2, random_state=42
     )
+    collate_fn = CollateFunction(train_mode="SW")
     val_dataset = WaveformDataset(seq_val, y_val)
     val_loader = DataLoader(val_dataset, batch_size=256, shuffle=False, collate_fn=collate_fn)
 

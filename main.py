@@ -6,15 +6,18 @@ from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
 import argparse
 import importlib
-from dataset import load_data_from_directories, WaveformDataset, collate_fn
+from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils import show_plot
 from loss.SW_RelativeErrorLoss import RelativeErrorLoss
+from loss.CQ_CosineSimilarity import CosineSimilarityLoss
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 
 def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, train_mode):
-    # 设置最佳指标：回归任务以最小化损失为目标，分类任务以最大化准确率为目标
+
+    # 设置最佳指标：码元宽度回归任务以最小化损失为目标，调制类型分类任务以最大化准确率为目标，码序列相似度任务以最大化余弦相似度为目标
     best_metric = float('inf') if train_mode == "SW" else 0
+
     history_train_loss = []
     history_valid_loss = []
 
@@ -47,7 +50,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             if train_mode == "SW":
                 loss = criterion(outputs, batch_y.view(-1, 1))  # 回归任务
             else:
-                loss = criterion(outputs, batch_y)  # 分类任务
+                loss = criterion(outputs, batch_y)  # 分类、生成任务
 
             train_loss += loss.item()
             total_train_samples += batch_X.size(0) # 累加样本数
@@ -200,7 +203,7 @@ if __name__ == "__main__":
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.train_mode)
 
     # 划分训练集和验证集
-    if args.train_mode in ["MT", "CQ"]:
+    if args.train_mode == "MT":
         stratify = labels
     else:
         stratify = None
@@ -208,7 +211,7 @@ if __name__ == "__main__":
     seq_train, seq_val, y_train, y_val = train_test_split(
         sequences, labels, test_size=0.2, random_state=42, stratify=stratify
     )
-
+    collate_fn = CollateFunction(args.train_mode)
     # 创建数据集和数据加载器
     if args.mode == 'train':
         train_dataset = WaveformDataset(seq_train, y_train)
@@ -230,11 +233,13 @@ if __name__ == "__main__":
         raise ValueError(f"指定的网络 {args.network} 无效或不存在")
 
     # 定义损失函数和优化器
-    if args.train_mode in ["MT", "CQ"]:
+    if args.train_mode == "MT":
         criterion = nn.CrossEntropyLoss()
     elif args.train_mode == "SW":
         # criterion = nn.MSELoss(reduction='sum')  # 回归任务，使用 'sum' 以便正确计算平均损失
         criterion = RelativeErrorLoss()
+    elif args.train_mode == "CQ":
+        criterion = CosineSimilarityLoss()
     else:
         raise ValueError(f"无效的 train_mode 参数: {args.train_mode}")
 

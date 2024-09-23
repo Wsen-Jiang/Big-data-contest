@@ -4,17 +4,31 @@ import torch
 import numpy as np
 import pandas as pd
 from torch.nn.utils.rnn import pad_sequence
-
-# 自定义collate_fn函数，用于处理变长序列
+# 自定义collate_fn类，用于处理变长序列
 # 在处理变长序列时，默认的 DataLoader 无法将不同长度的序列组合成一个批次，因此需要自定义 collate_fn 函数来实现填充操作。
-def collate_fn(batch):
-    sequences = [item[0] for item in batch]
-    labels = torch.tensor([item[1] for item in batch], dtype=torch.float32)
-    # 获取每个序列的长度
-    lengths = torch.tensor([len(seq) for seq in sequences], dtype=torch.long)
-    # 对序列进行填充
-    padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0)
-    return padded_sequences, lengths, labels
+class CollateFunction:
+    def __init__(self,train_mode = None):
+        self.train_mode = train_mode
+    def __call__(self,batch):
+        sequences = [item[0] for item in batch]  # IQ 序列
+        # 获取序列长度
+        seq_lengths = torch.tensor([len(seq) for seq in sequences], dtype=torch.long)
+        # 填充序列
+        padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0.0)
+
+        if self.train_mode == "MT":         # 分类任务
+            labels = torch.tensor([item[1] for item in batch], dtype=torch.long)
+        elif self.train_mode == "SW":       # 回归任务
+            labels = torch.tensor([item[1] for item in batch], dtype=torch.float32)
+        elif self.train_mode == "CQ":       # 码序列生成
+            labels = [item[1] for item in batch]
+            label_lengths = torch.tensor([len(label) for label in labels], dtype=torch.long)
+            # 填充标签，使用 -1 作为填充值
+            labels = pad_sequence(labels, batch_first=True, padding_value=-1)
+            return padded_sequences, seq_lengths, labels, label_lengths
+        else:
+            raise ValueError(f"无效的 train_mode 参数: {self.train_mode}")
+        return padded_sequences, seq_lengths, labels
 
 
 # 定义自定义数据集类
@@ -67,7 +81,7 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
                     # 码元宽度
                     SymbolWidth = round(float(data.iloc[0, 4]), 2)
                     # 码序列
-                    CodeSequence = data.iloc[:,2].values.astype(np.float32)
+                    CodeSequence = data.iloc[:,2].values
 
                     if train_mode == "MT":
                         label = ModulationType

@@ -9,3 +9,4 @@ def show_plot(train_losses_history, valid_losses_history, loss_pic_filename):
     plt.title('Training and Validation Loss')
     plt.legend()
     plt.savefig(loss_pic_filename)
+    plt.close()

@@ -45,6 +45,7 @@ def normalization(input_tensor):
 def load_data_from_directories(root_dir, data_dirs,train_mode):
     sequences = []
     labels = []
+
     # 遍历每个目录
     for dir_name in data_dirs:
         dir_path = os.path.join(root_dir, dir_name)

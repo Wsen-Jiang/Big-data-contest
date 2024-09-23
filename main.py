@@ -8,12 +8,11 @@ import argparse
 import importlib
 from dataset import load_data_from_directories, WaveformDataset, collate_fn
 from utils import show_plot
-from models.CNNRegressor import CNNRegressor
+from loss.SW_RelativeErrorLoss import RelativeErrorLoss
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-
-def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, save_loss_path, train_mode):
+def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, train_mode):
     # 设置最佳指标：回归任务以最小化损失为目标，分类任务以最大化准确率为目标
     best_metric = float('inf') if train_mode == "SW" else 0
     history_train_loss = []
@@ -27,11 +26,14 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         end_path = "CodeSequence"
     else:
         raise ValueError(f"无效的 train_mode 参数: {train_mode}")
+    model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
+    os.makedirs(model_dir, exist_ok=True)
 
     for epoch in range(num_epochs):
         # 训练阶段
         model.train()
         train_loss = 0
+        total_train_samples = 0
         for batch_X, lengths, batch_y in train_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             lengths = lengths.to(device)
@@ -48,10 +50,12 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
                 loss = criterion(outputs, batch_y)  # 分类任务
 
             train_loss += loss.item()
+            total_train_samples += batch_X.size(0) # 累加样本数
             loss.backward()
             optimizer.step()
-
-        train_loss /= len(train_loader)
+        # 当使用reduce='sum'时，每个批次的损失是所有样本的MSE，因此需要除以总样本数
+        # train_loss /= len(train_loader)
+        train_loss /= total_train_samples
         history_train_loss.append(train_loss)
 
         # 验证阶段
@@ -98,9 +102,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             if mse < best_metric:
                 best_metric = mse
                 # 保存最佳模型
-                model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
-                os.makedirs(model_dir, exist_ok=True)
-                torch.save(model.state_dict(), os.path.join(model_dir, f'{epoch + 1}_best_model.pth'))
+                torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
         else:
             avg_val_loss = sum_val_loss / len(val_loader)  # 对于分类任务，可以保持原有方式
             accuracy = 100 * correct / total
@@ -108,15 +110,15 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             if accuracy > best_metric:
                 best_metric = accuracy
                 # 保存最佳模型
-                model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
-                os.makedirs(model_dir, exist_ok=True)
-                torch.save(model.state_dict(), os.path.join(model_dir, f'{epoch + 1}_best_model.pth'))
+                torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
 
         history_valid_loss.append(avg_val_loss)
 
     # 保存最终模型
-    torch.save(model.state_dict(), f'log/models/{end_path}/{model.__class__.__name__}/final_model.pth')
-    save_path = f'{save_loss_path}/{end_path}/{model.__class__.__name__}'
+    torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
+
+    # loss图保存路径
+    save_path = f'log/save_loss/{end_path}/{model.__class__.__name__}'
     os.makedirs(save_path, exist_ok=True)
     show_plot(history_train_loss, history_valid_loss,
               f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
@@ -184,16 +186,15 @@ if __name__ == "__main__":
     arg_parser.add_argument("--network", type=str, default="CNNRegressor",
                             help="选择网络 (例如 CNNClassifier, ResNet)")
     arg_parser.add_argument("--lr", type=float, default=0.0005, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=5, help="训练轮数")
+    arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
     arg_parser.add_argument("--batch_size", type=int, default=256, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = 'Dataset'  # 请将此路径替换为您的数据集根目录
+    root_dir = 'Dataset'
     data_dirs = ['1', '2', '3', '4']
-    save_loss_path = "log/save_loss"
 
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.train_mode)
@@ -215,7 +216,6 @@ if __name__ == "__main__":
         val_dataset = WaveformDataset(seq_val, y_val)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     elif args.mode == 'test':
-        # 测试时使用验证集作为测试集
         val_dataset = WaveformDataset(seq_val, y_val)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     else:
@@ -227,13 +227,14 @@ if __name__ == "__main__":
         model_class = getattr(module, args.network)
         model = model_class()
     except (ImportError, AttributeError):
-        raise ValueError(f"指定的网络 {args.network} 无效或不存在。")
+        raise ValueError(f"指定的网络 {args.network} 无效或不存在")
 
     # 定义损失函数和优化器
     if args.train_mode in ["MT", "CQ"]:
         criterion = nn.CrossEntropyLoss()
     elif args.train_mode == "SW":
-        criterion = nn.MSELoss(reduction='sum')  # 回归任务，使用 'sum' 以便正确计算平均损失
+        # criterion = nn.MSELoss(reduction='sum')  # 回归任务，使用 'sum' 以便正确计算平均损失
+        criterion = RelativeErrorLoss()
     else:
         raise ValueError(f"无效的 train_mode 参数: {args.train_mode}")
 
@@ -243,17 +244,8 @@ if __name__ == "__main__":
     model.to(device)
 
     if args.mode == 'train':
-        # 定义模型保存目录
-        if args.train_mode == "MT":
-            end_path = "ModulationType"
-        elif args.train_mode == "SW":
-            end_path = "SymbolWidth"
-        elif args.train_mode == "CQ":
-            end_path = "CodeSequence"
-        model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
-        os.makedirs(model_dir, exist_ok=True)
         # 训练模型
-        train(model, train_loader, val_loader, criterion, optimizer, device, args.epochs, save_loss_path, args.train_mode)
+        train(model, train_loader, val_loader, criterion, optimizer, device, args.epochs, args.train_mode)
     elif args.mode == 'test':
         if not args.model_path:
             print("测试模式需要指定模型文件路径，请使用 --model_path 参数。")

@@ -10,7 +10,7 @@ from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils import show_plot
 from loss.SW_RelativeErrorLoss import RelativeErrorLoss
 from loss.CQ_CosineSimilarity import CosineSimilarityLoss
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error
 
 
 def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, train_mode):
@@ -44,6 +44,8 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             # 调整输入数据的形状
             batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
+            # print("Input shape:", batch_X.shape)
+
             optimizer.zero_grad()
             outputs = model(batch_X)
 
@@ -57,10 +59,9 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             loss.backward()
             optimizer.step()
         # 当使用reduce='sum'时，每个批次的损失是所有样本的MSE，因此需要除以总样本数
-        # train_loss /= len(train_loader)
-        train_loss /= total_train_samples
+        train_loss /= len(train_loader)
+        # train_loss /= total_train_samples
         history_train_loss.append(train_loss)
-
         # 验证阶段
         model.eval()
         sum_val_loss = 0.0
@@ -98,12 +99,11 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             avg_val_loss = sum_val_loss / total_samples  # 计算平均损失
             mse = mean_squared_error(all_targets, all_preds)
             rmse = mean_squared_error(all_targets, all_preds, squared=False)
-            mae = mean_absolute_error(all_targets, all_preds)
 
             print(
-                f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f}, MSE: {mse:.4f}, RMSE: {rmse:.4f}, MAE: {mae:.4f}')
-            if mse < best_metric:
-                best_metric = mse
+                f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f}, MSE: {mse:.4f}, RMSE: {rmse:.4f}')
+            if avg_val_loss < best_metric:
+                best_metric = avg_val_loss
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
         else:
@@ -177,16 +177,15 @@ def test(model, val_loader, criterion, device, model_path, train_mode):
         avg_val_loss = val_loss / total_samples
         mse = mean_squared_error(all_targets, all_preds)
         rmse = mean_squared_error(all_targets, all_preds, squared=False)
-        mae = mean_absolute_error(all_targets, all_preds)
-        print(f'验证集上的损失: {avg_val_loss:.4f}, MSE: {mse:.4f}, RMSE: {rmse:.4f}, MAE: {mae:.4f}')
+        print(f'验证集上的损失: {avg_val_loss:.4f}, MSE: {mse:.4f}, RMSE: {rmse:.4f}')
 
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser("Train or test the model")
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
-    arg_parser.add_argument("--train_mode", type=str, default="SW",
+    arg_parser.add_argument("--train_mode", type=str, default="MT",
                             help="MT(ModulationType)、SW(SymbolWidth)、CQ(CodeSequence)")
-    arg_parser.add_argument("--network", type=str, default="CNNRegressor",
+    arg_parser.add_argument("--network", type=str, default="CNNClassifier",
                             help="选择网络 (例如 CNNClassifier, ResNet)")
     arg_parser.add_argument("--lr", type=float, default=0.0005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
@@ -236,10 +235,11 @@ if __name__ == "__main__":
     if args.train_mode == "MT":
         criterion = nn.CrossEntropyLoss()
     elif args.train_mode == "SW":
-        # criterion = nn.MSELoss(reduction='sum')  # 回归任务，使用 'sum' 以便正确计算平均损失
         criterion = RelativeErrorLoss()
     elif args.train_mode == "CQ":
-        criterion = CosineSimilarityLoss()
+        # criterion = CosineSimilarityLoss()
+        criterion = nn.CosineEmbeddingLoss()
+
     else:
         raise ValueError(f"无效的 train_mode 参数: {args.train_mode}")
 

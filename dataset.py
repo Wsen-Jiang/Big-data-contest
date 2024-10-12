@@ -21,7 +21,7 @@ class CollateFunction:
         elif self.train_mode == "SW":       # 回归任务
             labels = torch.tensor([item[1] for item in batch], dtype=torch.float32)
         elif self.train_mode == "CQ":       # 码序列生成
-            labels = [item[1] for item in batch]
+            labels = [torch.tensor(item[1], dtype=torch.long) for item in batch] #每一个码序列是一个tensor
             label_lengths = torch.tensor([len(label) for label in labels], dtype=torch.long)
             # 填充标签，使用 -1 作为填充值
             labels = pad_sequence(labels, batch_first=True, padding_value=-1)
@@ -41,7 +41,10 @@ class WaveformDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        return self.sequences[idx], self.labels[idx]
+        seq = self.sequences[idx]  # 获取序列
+        label = self.labels[idx]  # 获取标签
+        return seq, label
+
 
 def normalization(input_tensor):
     input_tensor = input_tensor.permute(1,0)
@@ -81,7 +84,8 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
                     # 码元宽度
                     SymbolWidth = round(float(data.iloc[0, 4]), 2)
                     # 码序列
-                    CodeSequence = data.iloc[:,2].values
+                    data = data.dropna(subset=[2]) # 删除码序列中的 NaN 值
+                    CodeSequence = data.iloc[:,2].values.astype(np.int32)
 
                     if train_mode == "MT":
                         label = ModulationType
@@ -91,6 +95,7 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
                         label = CodeSequence
                     else:
                         raise ValueError(f"无效的 train_model 参数: {train_mode}")
+                    label = torch.tensor(label)
                     labels.append(label)
 
                 except IndexError:

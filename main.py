@@ -45,7 +45,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         # 训练阶段
         model.train()
         train_loss = 0
-        total_train_samples = 0
+
         for batch_X, lengths, batch_y in train_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             lengths = lengths.to(device)
@@ -64,18 +64,15 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
                 loss = criterion(outputs, batch_y)  # 分类、生成任务
 
             train_loss += loss.item()
-            total_train_samples += batch_X.size(0) # 累加样本数
             loss.backward()
             optimizer.step()
-        # 当使用reduce='sum'时，每个批次的损失是所有样本的MSE，因此需要除以总样本数
         train_loss /= len(train_loader)
-        # train_loss /= total_train_samples
+
         history_train_loss.append(train_loss)
 
         # 验证阶段
         model.eval()
         sum_val_loss = 0.0
-        total_samples = 0  # 用于累加样本数量
         if task in ["MT", "CQ"]:
             correct = 0
             total = 0
@@ -97,7 +94,6 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
                     sum_val_loss += loss.item()  # 累加总损失
                     all_preds.extend(outputs.cpu().numpy())
                     all_targets.extend(batch_y.cpu().numpy())
-                    total_samples += batch_X.size(0)  # 累加样本数
                 else:
                     loss = criterion(outputs, batch_y)
                     sum_val_loss += loss.item()
@@ -106,7 +102,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
                     correct += (predicted == batch_y).sum().item()
 
         if task == "SW":
-            avg_val_loss = sum_val_loss / total_samples  # 计算平均损失
+            avg_val_loss = sum_val_loss / len(val_loader)  # 计算平均损失
             mse = mean_squared_error(all_targets, all_preds)
             rmse = mean_squared_error(all_targets, all_preds, squared=False)
 
@@ -128,7 +124,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         history_valid_loss.append(avg_val_loss)
 
     # 保存最终模型
-    torch.save(model.state_dict(), os.path.join(model_dir,'500_75.12_final_model.pth'))
+    torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
 
     # loss图保存路径
     save_path = f'log/save_loss/{end_path}/{model.__class__.__name__}'
@@ -149,7 +145,6 @@ def test(model, val_loader, criterion, device, model_path, task):
     model.eval()
 
     val_loss = 0.0
-    total_samples = 0
     if task in ["MT", "CQ"]:
         correct = 0
         total = 0
@@ -171,7 +166,6 @@ def test(model, val_loader, criterion, device, model_path, task):
                 val_loss += loss.item()  # 累加总损失
                 all_preds.extend(outputs.cpu().numpy())
                 all_targets.extend(batch_y.cpu().numpy())
-                total_samples += batch_X.size(0)  # 累加样本数
             else:
                 loss = criterion(outputs, batch_y)
                 val_loss += loss.item()
@@ -184,7 +178,7 @@ def test(model, val_loader, criterion, device, model_path, task):
         accuracy = 100 * correct / total
         print(f'验证集上的损失: {avg_val_loss:.4f}, 准确率: {accuracy:.2f}%')
     elif task == "SW":
-        avg_val_loss = val_loss / total_samples
+        avg_val_loss = val_loss / len(val_loader)
         mse = mean_squared_error(all_targets, all_preds)
         rmse = mean_squared_error(all_targets, all_preds, squared=False)
         #计算相对误差
@@ -214,7 +208,7 @@ if __name__ == "__main__":
                             help="选择网络 (例如 CNNClassifier, ResNet)")
     arg_parser.add_argument("--lr", type=float, default=0.0005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=256, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
@@ -281,3 +275,6 @@ if __name__ == "__main__":
             print("测试模式需要指定模型文件路径，请使用 --model_path 参数。")
             exit(1)
         test(model, val_loader, criterion, device, args.model_path, args.task)
+
+"""测试指令
+python main.py --mode test --task SW --network CNNRegressor --model_path log/models/SymbolWidth/CNNRegressor/0.1495_60.81_best_model.pth"""

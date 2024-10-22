@@ -21,8 +21,8 @@ class ResidualBlock(nn.Module):
 class ResidualRegressor(nn.Module):
     def __init__(self, output_dim=1):
         super(ResidualRegressor, self).__init__()
-        self.resblock1 = ResidualBlock(2, 64)  # 第一层
-        self.resblock2 = ResidualBlock(64, 128)  # 第二层
+        self.resblock1 = ResidualBlock(2, 64)
+        self.resblock2 = ResidualBlock(64, 128)
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(128, output_dim)  # 输出通道数与最后一层匹配
 

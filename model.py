@@ -1,29 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-class CNNClassifier_BN(nn.Module):
-    def __init__(self, num_classes=4):
-        super(CNNClassifier_BN, self).__init__()
-        self.conv1 = nn.Conv1d(2, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.conv2 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.conv3 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm1d(256)
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(0.5)  # 添加Dropout层
-        self.fc = nn.Linear(256, num_classes)
-
-    def forward(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = self.pool(x).squeeze(-1)
-        x = self.dropout(x)  # 应用Dropout
-        x = self.fc(x)
-        return x
-
 class CNNLSTMClassifier(nn.Module):
     def __init__(self, num_classes=4):
         super(CNNLSTMClassifier, self).__init__()
@@ -62,61 +39,10 @@ class CNNLSTMClassifier(nn.Module):
 
         return out
 
-
-class CNN_LSTM_Classifier(nn.Module):
-    def __init__(self, channels=2, num_classes=4, dropout=0.1):
-        super(CNN_LSTM_Classifier, self).__init__()
-        self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm1d(32)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=7, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm1d(64)
-        self.conv3 = nn.Conv1d(64, 128, kernel_size=3, stride=1, padding=1)
-        self.bn3 = nn.BatchNorm1d(128)
-        self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
-
-        # LSTM层
-        self.lstm = nn.LSTM(input_size=128, hidden_size=64, num_layers=1, batch_first=True, bidirectional=True)
-        self.dropout = nn.Dropout(dropout)
-
-        self.fc1 = nn.Linear(128, num_classes)
-
-        nn.init.kaiming_uniform_(self.conv1.weight, mode='fan_in', nonlinearity='relu')
-        nn.init.kaiming_uniform_(self.conv2.weight, mode='fan_in', nonlinearity='relu')
-        nn.init.kaiming_uniform_(self.conv3.weight, mode='fan_in', nonlinearity='relu')
-        nn.init.kaiming_uniform_(self.fc1.weight, mode='fan_in', nonlinearity='relu')
-
-    def forward(self, x):
-        # 卷积和池化
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.bn1(x)
-        x = self.pool(F.relu(self.conv2(x)))
-        x = self.bn2(x)
-        x = self.pool(F.relu(self.conv3(x)))
-        x = self.bn3(x)
-        x = self.dropout(x)
-
-        # 调整维度以适应LSTM输入 [batch_size, length, channels] -> [batch_size, sequence_length, feature_size]
-        x = x.permute(0, 2, 1)
-
-        # LSTM输出
-        x, (_, _) = self.lstm(x)
-        x = torch.mean(x,dim=1) # [bz,128]
-
-        # 将LSTM的输出展平为 [batch_size, -1]，即把sequence_length和hidden_size合并成一个维度
-        # x = x.reshape(x.shape[0], -1)
-        # # 动态计算全连接层的输入大小
-        # if self.fc1 is None:
-        #     self.fc1 = nn.Linear(x.shape[1], 4096)
-        #     nn.init.kaiming_uniform_(self.fc1.weight, mode='fan_in', nonlinearity='relu')
-
-        # 全连接层
-        x = F.relu(self.fc1(x))
-        return x
-
 # 定义神经网络模型
-class CNN_LSTM_Classifier2(nn.Module):
+class DeepCNN_LSTMClassifier(nn.Module):
     def __init__(self, channels=2, num_classes=4, dropout=0.1):
-        super(CNN_LSTM_Classifier2, self).__init__()
+        super(DeepCNN_LSTMClassifier, self).__init__()
         # 卷积层
         self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm1d(32)
@@ -465,7 +391,7 @@ class Siamese_S2S_175(nn.Module):
 
 # ------------------------------------------------IQ----------------------------------------------------------
 class S2S_IQ(nn.Module):
-    def __init__(self, channels, number_classes, window_len, hidden1, dropout):
+    def __init__(self, channels, number_classes, hidden1, dropout):
         super(S2S_IQ, self).__init__()
         self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm1d(32)

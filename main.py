@@ -176,7 +176,7 @@ def test(model, val_loader, criterion, device, model_path, task):
     if task in ["MT", "CQ"]:
         avg_val_loss = val_loss / len(val_loader)
         accuracy = 100 * correct / total
-        print(f'验证集上的损失: {avg_val_loss:.4f}, 准确率: {accuracy:.2f}%')
+        print(f'验证集上的损失: {avg_val_loss:.4f}, 准确率: {accuracy:.3f}%')
     elif task == "SW":
         avg_val_loss = val_loss / len(val_loader)
         mse = mean_squared_error(all_targets, all_preds)

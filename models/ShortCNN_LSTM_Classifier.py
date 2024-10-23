@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class CNN_LSTM_Classifier_L(nn.Module):
+class ShortCNN_LSTM_Classifier(nn.Module):
     def __init__(self, channels=2, num_classes=4, dropout=0.6):
-        super(CNN_LSTM_Classifier_L, self).__init__()
+        super(ShortCNN_LSTM_Classifier, self).__init__()
         self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm1d(32)
         self.conv2 = nn.Conv1d(32, 64, kernel_size=7, stride=1, padding=1)

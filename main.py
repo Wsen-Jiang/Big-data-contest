@@ -12,7 +12,8 @@ from loss.SW_RelativeErrorLoss import RelativeErrorLoss
 from loss.CQ_CosineSimilarity import CosineSimilarityLoss
 from sklearn.metrics import mean_squared_error
 import numpy as np
-# 定义一个函数来计算得分
+
+# 计算码元宽度得分
 def calculate_score(relative_error):
     if relative_error <= 0.05:
         return 100
@@ -38,6 +39,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         end_path = "CodeSequence"
     else:
         raise ValueError(f"无效的 task 参数: {task}")
+
     model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
     os.makedirs(model_dir, exist_ok=True)
 
@@ -61,7 +63,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             if task == "SW":
                 loss = criterion(outputs, batch_y.view(-1, 1))  # 回归任务
             else:
-                loss = criterion(outputs, batch_y)  # 分类、生成任务
+                loss = criterion(outputs, batch_y)  # 分类任务
 
             train_loss += loss.item()
             loss.backward()
@@ -182,7 +184,7 @@ def test(model, val_loader, criterion, device, model_path, task):
         mse = mean_squared_error(all_targets, all_preds)
         rmse = mean_squared_error(all_targets, all_preds, squared=False)
         #计算相对误差
-        all_preds = np.array(all_preds).squeeze() #去掉不必要的维度，防止触发广播机制
+        all_preds = np.array(all_preds).squeeze() #将预测结果降为一维，防止触发广播机制
         # 对 all_preds 的值进行裁剪，限定范围在 0.2 到 1 之间
         all_preds = np.clip(all_preds, 0.2, 1.0)
 

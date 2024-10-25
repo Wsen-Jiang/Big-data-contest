@@ -8,8 +8,8 @@ import argparse
 import importlib
 from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils import show_plot
-from loss.SW_RelativeErrorLoss import RelativeErrorLoss
-from loss.CQ_CosineSimilarity import CosineSimilarityLoss
+from Criterion.SW_RelativeErrorLoss import RelativeErrorLoss
+from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
 from sklearn.metrics import mean_squared_error
 import numpy as np
 
@@ -48,9 +48,9 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         model.train()
         train_loss = 0
 
-        for batch_X, lengths, batch_y in train_loader:
+        for batch_X, seq_lengths, batch_y in train_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            lengths = lengths.to(device)
+            seq_lengths = seq_lengths.to(device)
 
             # 调整输入数据的形状
             batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
@@ -83,9 +83,9 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             all_targets = []
 
         with torch.no_grad():
-            for batch_X, lengths, batch_y in val_loader:
+            for batch_X, seq_lengths, batch_y in val_loader:
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                lengths = lengths.to(device)
+                seq_lengths = seq_lengths.to(device)
 
                 batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
@@ -155,9 +155,9 @@ def test(model, val_loader, criterion, device, model_path, task):
         all_targets = []
 
     with torch.no_grad():
-        for batch_X, lengths, batch_y in val_loader:
+        for batch_X, seq_lengths, batch_y in val_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            lengths = lengths.to(device)
+            seq_lengths = seq_lengths.to(device)
 
             batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
@@ -258,8 +258,7 @@ if __name__ == "__main__":
     elif args.task == "SW":
         criterion = RelativeErrorLoss()
     elif args.task == "CQ":
-        # criterion = CosineSimilarityLoss()
-        criterion = nn.CosineEmbeddingLoss()
+        criterion = CosineSimilarityLoss()
 
     else:
         raise ValueError(f"无效的 task 参数: {args.task}")

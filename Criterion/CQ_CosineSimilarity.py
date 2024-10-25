@@ -1,30 +1,27 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class CosineSimilarityLoss(nn.Module):
-    def __init__(self, decoder):
+    def __init__(self):
         super(CosineSimilarityLoss, self).__init__()
-        self.decoder = decoder  # 需要传入解码器以便获取嵌入
 
-    def forward(self, outputs, labels, label_lengths):
-        # 截断输出以匹配真实标签长度
-        batch_size, max_len, output_dim = outputs.size()
+    def forward(self, predicted_sequences, target_sequences, label_lengths):
+        batch_size, seq_length = predicted_sequences.size()
 
-        total_loss = 0.0
+        # 基于 label_lengths 创建 mask
+        mask = torch.arange(seq_length).unsqueeze(0).expand(batch_size, seq_length).to(label_lengths.device)
+        mask = mask < label_lengths.unsqueeze(1)
 
-        for i in range(batch_size):
-            current_output = outputs[i, :label_lengths[i], :]  # (label_lengths[i], output_dim)
-            current_label = labels[i, :label_lengths[i]]  # (label_lengths[i])
+        # 将 predicted_sequences 和 target_sequences 转为浮点数类型，确保余弦相似度计算时类型匹配
+        predicted_sequences = predicted_sequences.float()
+        target_sequences = target_sequences.float()
 
-            # 使用解码器的嵌入层将真实标签转化为嵌入
-            one_hot_labels = self.decoder.embedding(current_label)  # (label_lengths[i], emb_dim)
+        # 应用 mask：保持有效位置，将无效（填充）位置设置为 0(0不会对余弦相似度的计算产生影响)
+        masked_predicted = torch.where(mask, predicted_sequences, torch.zeros_like(predicted_sequences))
+        # 沿着嵌入维度计算余弦相似度
+        cos_sim = F.cosine_similarity(masked_predicted, target_sequences, dim=-1)  # 形状: (batch_size, seq_length)
 
-            # 计算余弦相似度
-            similarity = F.cosine_similarity(current_output, one_hot_labels, dim=1)
+        loss = 1 - cos_sim.mean()  # 计算整个批次的平均余弦相似度损失
 
-            # 将相似度转为损失（1 - similarity）
-            loss = 1 - similarity.mean()  # 平均损失
-            total_loss += loss
-
-        return total_loss / batch_size
+        return loss

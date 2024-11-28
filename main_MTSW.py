@@ -11,7 +11,7 @@ from utils import show_plot
 from Criterion.SW_RelativeErrorLoss import RelativeErrorLoss
 from sklearn.metrics import mean_squared_error
 import numpy as np
-
+from torch.optim.lr_scheduler import StepLR
 # 计算码元宽度得分
 def calculate_score(relative_error):
     if relative_error <= 0.05:
@@ -21,6 +21,9 @@ def calculate_score(relative_error):
     else:
         # 在 5% 和 20% 之间线性下降
         return 100 - ((relative_error - 0.05) / (0.20 - 0.05)) * 100
+
+# Gradient Clipping (to prevent gradient explosion)
+max_norm = 5.0
 
 def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, task):
 
@@ -53,8 +56,11 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
             # print("Input shape:", batch_X.shape)
+            # Gradient clipping to prevent explosion
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
             optimizer.zero_grad()
+
             outputs = model(batch_X)
 
             if task == "SW":
@@ -65,8 +71,10 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             train_loss += loss.item()
             loss.backward()
             optimizer.step()
-        train_loss /= len(train_loader)
+        # Step the scheduler
+        # scheduler.step()
 
+        train_loss /= len(train_loader)
         history_train_loss.append(train_loss)
 
         # 验证阶段
@@ -203,30 +211,26 @@ if __name__ == "__main__":
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
     arg_parser.add_argument("--task", type=str, default="MT",
                             help="MT(ModulationType)、SW(SymbolWidth)")
-    arg_parser.add_argument("--network", type=str, default="CNNClassifier",
+    arg_parser.add_argument("--network", type=str, default="CNN_LSTM_Classifier",
                             help="选择网络 (例如 CNNClassifier, ResNet)")
-    arg_parser.add_argument("--lr", type=float, default=0.0005, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
+    arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
+    arg_parser.add_argument("--epochs", type=int, default=200, help="训练轮数")
+    arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = 'Dataset'
-    data_dirs = ['1', '2', '3', '4']
+    root_dir = 'train_data'
+    data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
 
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
 
     # 划分训练集和验证集
-    if args.task == "MT":
-        stratify = labels
-    else:
-        stratify = None
 
     seq_train, seq_val, y_train, y_val = train_test_split(
-        sequences, labels, test_size=0.2, random_state=42, stratify=stratify
+        sequences, labels, test_size=0.2, random_state=42
     )
     collate_fn = CollateFunction(args.task)
     # 创建数据集和数据加载器
@@ -257,9 +261,19 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"无效的 task 参数: {args.task}")
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=1e-5)
+    # optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    # 加入学习率自动调节
+    # scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Wrap the model for multi-GPU
+    # if torch.cuda.device_count() > 1:
+    #     print(f"Using {torch.cuda.device_count()} GPUs")
+    #     model = nn.DataParallel(model)
+    #
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # model.to(device)
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
     if args.mode == 'train':

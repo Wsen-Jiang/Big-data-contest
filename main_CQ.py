@@ -7,18 +7,45 @@ from sklearn.model_selection import train_test_split
 import argparse
 import importlib
 
-from cosinesimilarity import cosine_similarity
 from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils import show_plot
 from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
 import numpy as np
-from models.CQ_Seq2Seq_2 import Encoder, Decoder
+from cosinesimilarity import cosine_similarity
+from models.CQ_Seq2Seq import Encoder, Decoder
 
 # 计算码元宽度得分
 def calculate_score(cosine_similarity):
+    if cosine_similarity >= 0.95:
+        return 100
+    elif cosine_similarity <= 0.7:
+        return 0
     return (cosine_similarity-0.7)*400
 
-def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, task):
+def output_process(outputs,labels):
+    ## 去除BOS
+    #labels = labels[:,1:]
+    output_seq_len = outputs.size(1)
+    target_seq_len = labels.size(1)
+    max_len = max(output_seq_len, target_seq_len)
+
+    # 如果 outputs 的长度不足 max_len，则在末尾填充
+    if output_seq_len < max_len:
+        padding_size = max_len - output_seq_len
+        padding = torch.full((outputs.size(0), padding_size, outputs.size(2)), fill_value=0,
+                             device=outputs.device)
+        outputs = torch.cat([outputs, padding], dim=1)
+
+    # 如果 labels 的长度不足 max_len，则在末尾填充
+    if target_seq_len < max_len:
+        padding_size = max_len - target_seq_len
+        padding = torch.full((labels.size(0), padding_size), fill_value=18,
+                             device=labels.device)
+        labels = torch.cat([labels, padding], dim=1)
+
+    return outputs, labels
+
+def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs,task):
 
     # 设置最佳指标：码元宽度回归任务以最小化损失为目标，调制类型分类任务以最大化准确率为目标，码序列相似度任务以最大化余弦相似度为目标
     best_metric = 0
@@ -47,19 +74,25 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             optimizer.zero_grad()
 
             outputs = model(batch_X, seq_lengths, batch_y, label_lengths)
-            # print(outputs.requires_grad, outputs.grad_fn)
-            # for i in range(outputs.shape[0]):
-            #     print(len(outputs[i]))
+            # for i in range(len(outputs)):
             #     print(outputs[i])
-            #     print(len(batch_y[i]))
-            #     print(batch_y[i])
-            loss = criterion(outputs, batch_y, label_lengths)
+            outputs, labels = output_process(outputs, batch_y)
+            # for i in range(outputs.size(0)):
+            #     print(f'output:{i}: {outputs[i].argmax(-1)}')
+            #     print(f'labels{i}: {labels[i]}')
+            # 展平张量
+            outputs = outputs.view(-1, outputs.size(-1))  # (batch_size * max_len, output_dim)
+            labels = labels.view(-1)  # (batch_size * max_len)
+            # 定义损失函数，忽略填充符的索引
+            loss = criterion(outputs, labels)
+
+            # loss = criterion(outputs, labels, label_lengths)
 
             train_loss += loss.item()
             loss.backward()
             optimizer.step()
         train_loss /= len(train_loader)
-
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {train_loss:.4f}')
         history_train_loss.append(train_loss)
 
         # 验证阶段
@@ -73,15 +106,22 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
 
                 # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
-                outputs = model(batch_X,seq_lengths,batch_y,label_lengths)
+                outputs = model(batch_X,seq_lengths,batch_y,label_lengths,use_teacher_forcing=False)
+                # 填充操作
+                outputs, labels = output_process(outputs, batch_y)
 
-                outputs = torch.round(outputs).to(torch.int64)
-                loss = criterion(outputs, batch_y, label_lengths)
+                consimilarity = cosine_similarity(outputs.argmax(dim=-1),labels,label_lengths)
+                # 展平张量
+                outputs = outputs.view(-1, outputs.size(-1))  # (batch_size * max_len, output_dim)
+                labels = labels.view(-1)  # (batch_size * max_len)
+                # 取整
+                # outputs = torch.round(outputs).to(torch.int64)
+                loss = criterion(outputs, labels)
                 sum_val_loss += loss.item()
 
         avg_val_loss = sum_val_loss / len(val_loader)  # 计算平均损失
 
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f}, CosineSimilarity:{1-avg_val_loss:.4f}')
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f},cosinesimilarity: {consimilarity}')
         if avg_val_loss > best_metric:
             best_metric = avg_val_loss
             # 保存最佳模型
@@ -118,7 +158,7 @@ def test(model, val_loader, criterion, device, model_path, task):
 
             # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
-            outputs = model(batch_X,seq_lengths,batch_y,label_lengths)
+            outputs = model(batch_X,seq_lengths,batch_y,label_lengths,use_teacher_forcing=False)
 
             outputs = torch.round(outputs).to(torch.int64)
             loss = criterion(outputs, batch_y, label_lengths)
@@ -135,25 +175,24 @@ if __name__ == "__main__":
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
     arg_parser.add_argument("--task", type=str, default="CQ",
                             help="only CQ")
-    arg_parser.add_argument("--network", type=str, default="CQ_Seq2Seq_2",
-                            help="选择网络 (例如 CNNClassifier, ResNet)")
-    arg_parser.add_argument("--lr", type=float, default=0.0005, help="学习率")
+    arg_parser.add_argument("--network", type=str, default="CQ_Seq2Seq",
+                            help="选择网络")
+    arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=256, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = 'Dataset'
-    data_dirs = ['1', '2', '3', '4']
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    root_dir = 'train_data'
+    data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK', '16QAM', '32APSK', '32QAM', 'BPSK', 'MSK', 'QPSK']
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
-
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # 划分训练集和验证集
     seq_train, seq_val, y_train, y_val = train_test_split(
-        sequences, labels, test_size=0.2, random_state=42, stratify=None
+        sequences, labels, test_size=0.2, random_state=42
     )
     collate_fn = CollateFunction(args.task)
     # 创建数据集和数据加载器
@@ -172,25 +211,46 @@ if __name__ == "__main__":
     try:
         module = importlib.import_module(f"models.{args.network}")
         model_class = getattr(module, args.network)
-        if args.network == "CQ_Seq2Seq_2":
+        if args.network == "CQ_Seq2Seq":
             input_dim = 2  # IQ流的输入维度
-            output_dim = 16  # 码序列的词汇表大小
+            output_dim = 19  # 码序列的词汇表大小
             emb_dim = 64  # 嵌入维度
             hidden_dim = 128  # 隐藏层维度
             n_lays = 2  # LSTM层数
             dropout = 0.5  # Dropout概率
-
+            vocab = {
+                "<BOS>": 16,  # Begin of Sequence 起始符
+                "<EOS>": 17,  # End of Sequence 结束符
+                "<PAD>": 18,
+                "0": 0,
+                "1": 1,
+                "2": 2,
+                "3": 3,
+                "4": 4,
+                "5": 5,
+                "6": 6,
+                "7": 7,
+                "8": 8,
+                "9": 9,
+                "10": 10,
+                "11": 11,
+                "12": 12,
+                "13": 13,
+                "14": 14,
+                "15": 15
+            }
             encoder = Encoder(input_dim, hidden_dim, n_lays, dropout).to(device)
             decoder = Decoder(output_dim, emb_dim, hidden_dim, n_lays, dropout).to(device)
             # 创建 Seq2Seq 实例
-            model = model_class(encoder, decoder)
+            model = model_class(encoder, decoder, vocab)
         else:
             model = model_class()
     except (ImportError, AttributeError):
         raise ValueError(f"指定的网络 {args.network} 无效或不存在")
 
     # 定义损失函数和优化器
-    criterion = CosineSimilarityLoss()
+    #criterion = CosineSimilarityLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=18)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 

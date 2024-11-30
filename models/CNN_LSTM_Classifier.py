@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-class CNN_LSTM_Class(nn.Module):
+class CNN_LSTM_Classifier(nn.Module):
     def __init__(self, channels=2, num_classes=10, dropout=0.5):
-        super(CNN_LSTM_Class, self).__init__()
+        super(CNN_LSTM_Classifier, self).__init__()
         # (Same model as before)
         self.conv1 = nn.Conv1d(channels, 64, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm1d(64)

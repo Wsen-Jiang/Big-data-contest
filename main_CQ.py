@@ -177,19 +177,20 @@ if __name__ == "__main__":
                             help="only CQ")
     arg_parser.add_argument("--network", type=str, default="CQ_Seq2Seq",
                             help="选择网络")
-    arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
+    arg_parser.add_argument("--lr", type=float, default=0.0001, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=256, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = 'train_data'
-    data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK', '16QAM', '32APSK', '32QAM', 'BPSK', 'MSK', 'QPSK']
+    root_dir = '../train_data'
+    data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     # 划分训练集和验证集
     seq_train, seq_val, y_train, y_val = train_test_split(
         sequences, labels, test_size=0.2, random_state=42
@@ -213,7 +214,7 @@ if __name__ == "__main__":
         model_class = getattr(module, args.network)
         if args.network == "CQ_Seq2Seq":
             input_dim = 2  # IQ流的输入维度
-            output_dim = 19  # 码序列的词汇表大小
+            output_dim = 35  # 码序列的词汇表大小
             emb_dim = 64  # 嵌入维度
             hidden_dim = 128  # 隐藏层维度
             n_lays = 2  # LSTM层数
@@ -242,7 +243,7 @@ if __name__ == "__main__":
             encoder = Encoder(input_dim, hidden_dim, n_lays, dropout).to(device)
             decoder = Decoder(output_dim, emb_dim, hidden_dim, n_lays, dropout).to(device)
             # 创建 Seq2Seq 实例
-            model = model_class(encoder, decoder, vocab)
+            model = model_class(encoder, decoder,vocab)
         else:
             model = model_class()
     except (ImportError, AttributeError):
@@ -267,3 +268,4 @@ if __name__ == "__main__":
 
 """测试指令
 python main_backup.py --mode test --task SW --network CNNRegressor --model_path log/models/SymbolWidth/CNNRegressor/0.1495_60.81_best_model.pth"""
+

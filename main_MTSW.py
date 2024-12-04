@@ -25,10 +25,10 @@ def calculate_score(relative_error):
 # Gradient Clipping (to prevent gradient explosion)
 max_norm = 5.0
 
-def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, task):
+def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_epochs, task):
 
     # 设置最佳指标：码元宽度回归任务以最小化损失为目标，调制类型分类任务以最大化准确率为目标，码序列相似度任务以最大化余弦相似度为目标
-    best_metric = float('inf') if task == "SW" else 0
+    best_metric =0
 
     history_train_loss = []
     history_valid_loss = []
@@ -84,60 +84,43 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             correct = 0
             total = 0
         else:
-            all_preds = []
-            all_targets = []
-
+            mean_score = 0
         with torch.no_grad():
-            for batch_X, seq_lengths, batch_y in val_loader:
-                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                seq_lengths = seq_lengths.to(device)
-
-                batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
-
-                outputs = model(batch_X)
+            for seq, val in zip(seq_val, y_val):
+                seq = seq.to(device)  # 将seq移动到device
+                val = torch.tensor(val, device=device)
+                seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
+                seq = seq.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+                # 单个验证样本的模型输出
+                outputs = model(seq)
 
                 if task == "SW":
-                    loss = criterion(outputs, batch_y.view(-1, 1))
-                    sum_val_loss += loss.item()  # 累加总损失
-                    all_preds.extend(outputs.cpu().numpy())
-                    all_targets.extend(batch_y.cpu().numpy())
+                    predict_SW = outputs.item()
+                    score_error = np.abs(predict_SW - val.item())
+                    score = calculate_score(score_error)
+                    # print(f"当前样本的得分是：{score:.2f}")
+                    mean_score += score
                 else:
-                    loss = criterion(outputs, batch_y)
-                    sum_val_loss += loss.item()
-                    _, predicted = torch.max(outputs.data, 1)
-                    total += batch_y.size(0)
-                    correct += (predicted == batch_y).sum().item()
-
+                    modulation_type = torch.argmax(outputs, dim=1) + 1  # 调制类型预测'
+                    correct += (modulation_type == (val+1))
         if task == "SW":
-            avg_val_loss = sum_val_loss / len(val_loader)  # 计算平均损失
-            mse = mean_squared_error(all_targets, all_preds)
-            rmse = mean_squared_error(all_targets, all_preds, squared=False)
-
-            print(
-                f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f}, MSE: {mse:.4f}, RMSE: {rmse:.4f}')
-            if avg_val_loss < best_metric:
-                best_metric = avg_val_loss
+            mean_score /= len(seq_val)
+            if mean_score > best_metric:
+                best_metric = mean_score
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
         else:
-            avg_val_loss = sum_val_loss / len(val_loader)  # 对于分类任务，可以保持原有方式
-            accuracy = 100 * correct / total
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f}, Accuracy: {accuracy:.2f}%')
+
+            accuracy = 100 * correct / len(seq_val)
+            accuracy = accuracy.item()
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {accuracy:.2f}%')
             if accuracy > best_metric:
                 best_metric = accuracy
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
 
-        history_valid_loss.append(avg_val_loss)
-
     # 保存最终模型
     torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
-
-    # loss图保存路径
-    save_path = f'log/save_loss/{end_path}/{model.__class__.__name__}'
-    os.makedirs(save_path, exist_ok=True)
-    show_plot(history_train_loss, history_valid_loss,
-              f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
 
 
 def test(model, val_loader, criterion, device, model_path, task):
@@ -209,12 +192,12 @@ def test(model, val_loader, criterion, device, model_path, task):
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser("Train or test the model")
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
-    arg_parser.add_argument("--task", type=str, default="MT",
+    arg_parser.add_argument("--task", type=str, default="SW",
                             help="MT(ModulationType)、SW(SymbolWidth)")
-    arg_parser.add_argument("--network", type=str, default="CNN_LSTM_Classifier",
+    arg_parser.add_argument("--network", type=str, default="CNN_Regressor_LSTM",
                             help="选择网络 (例如 CNNClassifier, ResNet)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=200, help="训练轮数")
+    arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
     arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
@@ -223,6 +206,7 @@ if __name__ == "__main__":
     # 指定根目录
     root_dir = 'train_data'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
+    # data_dirs = ['8APSK']
 
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
@@ -237,8 +221,8 @@ if __name__ == "__main__":
     if args.mode == 'train':
         train_dataset = WaveformDataset(seq_train, y_train)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-        val_dataset = WaveformDataset(seq_val, y_val)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+        # val_dataset = WaveformDataset(seq_val, y_val)
+        # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     elif args.mode == 'test':
         val_dataset = WaveformDataset(seq_val, y_val)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
@@ -273,17 +257,18 @@ if __name__ == "__main__":
     #
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model.to(device)
-    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
     if args.mode == 'train':
         # 训练模型
-        train(model, train_loader, val_loader, criterion, optimizer, device, args.epochs, args.task)
+        train(model, train_loader, seq_val,y_val, criterion, optimizer, device, args.epochs, args.task)
     elif args.mode == 'test':
         if not args.model_path:
             print("测试模式需要指定模型文件路径，请使用 --model_path 参数。")
             exit(1)
-        test(model, val_loader, criterion, device, args.model_path, args.task)
+        test(model, seq_val, criterion, device, args.model_path, args.task)
 
 """测试指令
 python main.py --mode test --task SW --network CNNRegressor --model_path log/models/SymbolWidth/CNNRegressor/0.1495_60.81_best_model.pth"""
+

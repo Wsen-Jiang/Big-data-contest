@@ -1,7 +1,7 @@
 import os
 import torch
 from models.CNN_LSTM_Classifier import CNN_LSTM_Classifier
-from dataset import load_data_from_directories
+from utils.dataset import load_data_from_directories
 from sklearn.model_selection import train_test_split
 
 def main():

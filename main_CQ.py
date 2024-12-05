@@ -7,11 +7,11 @@ from sklearn.model_selection import train_test_split
 import argparse
 import importlib
 
-from dataset import load_data_from_directories, WaveformDataset, CollateFunction
-from utils import show_plot
+from utils.dataset import load_data_from_directories, WaveformDataset, CollateFunction
+from utils.utils import show_plot
 from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
 import numpy as np
-from cosinesimilarity import cosine_similarity
+from utils.cosinesimilarity import cosine_similarity
 from models.CQ_Seq2Seq import Encoder, Decoder
 
 # 计算码元宽度得分

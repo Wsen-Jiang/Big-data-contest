@@ -27,4 +27,4 @@
 | CNN*3_Transform | 0.005         | ***        | ***   | *** |
 
 ## Leaderboard
-
+![Image text](https://github.com/WenSen-Jiang/Big-data-contest/blob/main/fig/leaderboard-1205.png)

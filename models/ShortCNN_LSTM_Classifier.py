@@ -3,14 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ShortCNN_LSTM_Classifier(nn.Module):
-    def __init__(self, channels=2, num_classes=4, dropout=0.6):
+    def __init__(self, channels=2, num_classes=10, dropout=0.6):
         super(ShortCNN_LSTM_Classifier, self).__init__()
         self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm1d(32)
         self.conv2 = nn.Conv1d(32, 64, kernel_size=7, stride=1, padding=1)
         self.bn2 = nn.BatchNorm1d(64)
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2, padding=0)
-
 
         # LSTM层
         self.lstm = nn.LSTM(input_size=64, hidden_size=32, num_layers=1, batch_first=True, bidirectional=True)

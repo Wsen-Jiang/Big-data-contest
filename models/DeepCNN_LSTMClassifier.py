@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 class DeepCNN_LSTMClassifier(nn.Module):
-    def __init__(self, channels=2, num_classes=4, dropout=0.1):
+    def __init__(self, channels=2, num_classes=10, dropout=0.1):
         super(DeepCNN_LSTMClassifier, self).__init__()
         # 卷积层
         self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)

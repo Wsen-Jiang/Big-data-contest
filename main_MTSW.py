@@ -41,6 +41,8 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
 
     model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
     os.makedirs(model_dir, exist_ok=True)
+    # record val testing log after each epoch training
+    f = open(os.path.join(model_dir, 'training.log'), 'w')
 
     for epoch in range(num_epochs):
         # 训练阶段
@@ -100,10 +102,12 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
                     # print(f"当前样本的得分是：{score:.2f}")
                     mean_score += score
                 else:
-                    modulation_type = torch.argmax(outputs, dim=1) + 1  # 调制类型预测'
+                    modulation_type = torch.argmax(outputs, dim=1) + 1  # 调制类型预测
                     correct += (modulation_type == (val+1))
         if task == "SW":
             mean_score /= len(seq_val)
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Mean score: {mean_score:.2f}%')
+            f.write(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {mean_score:.2f}%' + '\n')
             if mean_score > best_metric:
                 best_metric = mean_score
                 # 保存最佳模型
@@ -113,6 +117,7 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
             accuracy = 100 * correct / len(seq_val)
             accuracy = accuracy.item()
             print(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {accuracy:.2f}%')
+            f.write(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {accuracy:.2f}%' +'\n')
             if accuracy > best_metric:
                 best_metric = accuracy
                 # 保存最佳模型
@@ -120,6 +125,7 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
 
     # 保存最终模型
     torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
+    f.close()
 
 
 def test(model, val_loader, criterion, device, model_path, task):
@@ -194,16 +200,16 @@ if __name__ == "__main__":
     arg_parser.add_argument("--task", type=str, default="SW",
                             help="MT(ModulationType)、SW(SymbolWidth)")
     arg_parser.add_argument("--network", type=str, default="CNN_Regressor_LSTM",
-                            help="选择网络 (例如 CNNClassifier, ResNet)")
+                            help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = 'train_data'
+    root_dir = '/mnt/data/LXP/data/train_data'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
     # data_dirs = ['8APSK']
 
@@ -256,12 +262,12 @@ if __name__ == "__main__":
     #
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model.to(device)
-    device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:7' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
     if args.mode == 'train':
         # 训练模型
-        train(model, train_loader, seq_val,y_val, criterion, optimizer, device, args.epochs, args.task)
+        train(model, train_loader, seq_val, y_val, criterion, optimizer, device, args.epochs, args.task)
     elif args.mode == 'test':
         if not args.model_path:
             print("测试模式需要指定模型文件路径，请使用 --model_path 参数。")

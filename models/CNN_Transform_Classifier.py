@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 class CNN_Transform_Classifier(nn.Module):
-    def __init__(self, channels=2, out_dim=1, dropout=0.7):
+    def __init__(self, channels=2, out_dim=10, dropout=0.7):
         super(CNN_Transform_Classifier, self).__init__()
         # 卷积部分
         self.conv1 = nn.Conv1d(channels, 32, kernel_size=3, stride=1, padding=1)

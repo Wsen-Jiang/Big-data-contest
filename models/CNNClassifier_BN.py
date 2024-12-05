@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 class CNNClassifier_BN(nn.Module):
-    def __init__(self, num_classes=4):
+    def __init__(self, num_classes=10):
         super(CNNClassifier_BN, self).__init__()
         self.conv1 = nn.Conv1d(2, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm1d(64)

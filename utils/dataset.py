@@ -65,10 +65,19 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
         with open(os.path.join(root_dir, 'cache', 'processed_data.pkl'), 'rb') as f:
             processed_data = pkl.load(f)
             sequences = processed_data['sequences']
-            labels = processed_data['labels']
+            if train_mode == "MT":
+                labels = processed_data['mt_labels']
+            elif train_mode == "SW":
+                labels = processed_data['sw_labels']
+            elif train_mode == "CQ":
+                labels = processed_data['cq_labels']
+            else:
+                raise ValueError(f"无效的 train_model 参数: {train_mode}")
     else:
         sequences = []
-        labels = []
+        mt_labels = []
+        sw_labels = []
+        cq_labels = []
 
         # 遍历每个目录
         for dir_name in data_dirs:
@@ -95,16 +104,9 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
                         data = data.dropna(subset=[2]) # 删除码序列中的 NaN 值
                         CodeSequence = data.iloc[:,2].values.astype(np.int32)
 
-                        if train_mode == "MT":
-                            label = ModulationType
-                        elif train_mode == "SW":
-                            label = SymbolWidth
-                        elif train_mode == "CQ":
-                            label = CodeSequence
-                        else:
-                            raise ValueError(f"无效的 train_model 参数: {train_mode}")
-                        label = torch.tensor(label)
-                        labels.append(label)
+                        mt_labels.append(torch.tensor(ModulationType))
+                        sw_labels.append(torch.tensor(SymbolWidth))
+                        cq_labels.append(torch.tensor(CodeSequence))
 
                     except IndexError:
                         print(f"文件 {file_name} 的列数不足，跳过该文件")
@@ -113,6 +115,16 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
         with open(os.path.join(root_dir, 'cache', 'processed_data.pkl'), 'wb') as f:
             processed_data = {}
             processed_data['sequences'] = sequences
-            processed_data['labels'] = labels
+            processed_data['mt_labels'] = mt_labels
+            processed_data['sw_labels'] = sw_labels
+            processed_data['cq_labels'] = cq_labels
             pkl.dump(processed_data, f)
+        if train_mode == "MT":
+            labels = mt_labels
+        elif train_mode == "SW":
+            labels = sw_labels
+        elif train_mode == "CQ":
+            labels = cq_labels
+        else:
+            raise ValueError(f"无效的 train_model 参数: {train_mode}")
     return sequences, labels

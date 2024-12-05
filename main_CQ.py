@@ -64,9 +64,9 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         model.train()
         train_loss = 0
 
-        for batch_X, seq_lengths, batch_y,label_lengths in train_loader:
+        for batch_X, seq_lengths, batch_y, label_lengths in train_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            seq_lengths,label_lengths = seq_lengths.to(device),label_lengths.to(device)
+            seq_lengths, label_lengths = seq_lengths.to(device), label_lengths.to(device)
 
             # 调整输入数据的形状
            #  batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--task", type=str, default="CQ",
                             help="only CQ")
     arg_parser.add_argument("--network", type=str, default="CQ_Seq2Seq",
-                            help="选择网络")
+                            help="选择网络: CQ_Seq2Seq")
     arg_parser.add_argument("--lr", type=float, default=0.0001, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
     arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = '../train_data'
+    root_dir = '/mnt/data/LXP/data/train_data'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # 读取数据
@@ -243,7 +243,7 @@ if __name__ == "__main__":
             encoder = Encoder(input_dim, hidden_dim, n_lays, dropout).to(device)
             decoder = Decoder(output_dim, emb_dim, hidden_dim, n_lays, dropout).to(device)
             # 创建 Seq2Seq 实例
-            model = model_class(encoder, decoder,vocab)
+            model = model_class(encoder, decoder, vocab)
         else:
             model = model_class()
     except (ImportError, AttributeError):

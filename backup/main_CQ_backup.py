@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 import argparse
 import importlib
 
-from utils.dataset import load_data_from_directories, WaveformDataset, CollateFunction
+from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils.utils import show_plot
 from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
 import numpy as np
@@ -92,7 +92,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
             loss.backward()
             optimizer.step()
         train_loss /= len(train_loader)
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {train_loss:.4f}')
+        # print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {train_loss:.4f}')
         history_train_loss.append(train_loss)
 
         # 验证阶段
@@ -102,18 +102,21 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         with torch.no_grad():
             for batch_X, seq_lengths, batch_y,label_lengths in val_loader:
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                seq_lengths,label_lengths = seq_lengths.to(device),label_lengths.to(device)
+                seq_lengths,label_lengths = seq_lengths.to(device), label_lengths.to(device)
 
-                # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+                # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channe ls, seq_len]
 
-                outputs = model(batch_X,seq_lengths,batch_y,label_lengths,use_teacher_forcing=False)
+                outputs = model(batch_X,seq_lengths,batch_y,label_lengths, use_teacher_forcing=False)
                 # 填充操作
                 outputs, labels = output_process(outputs, batch_y)
 
-                consimilarity = cosine_similarity(outputs.argmax(dim=-1),labels,label_lengths)
                 # 展平张量
                 outputs = outputs.view(-1, outputs.size(-1))  # (batch_size * max_len, output_dim)
                 labels = labels.view(-1)  # (batch_size * max_len)
+
+                # 计算余弦相似度
+                consimilarity = cosine_similarity(outputs.argmax(dim=-1).cpu().numpy(), labels.cpu().numpy())
+
                 # 取整
                 # outputs = torch.round(outputs).to(torch.int64)
                 loss = criterion(outputs, labels)
@@ -121,7 +124,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
 
         avg_val_loss = sum_val_loss / len(val_loader)  # 计算平均损失
 
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f},cosinesimilarity: {consimilarity}')
+        print(f'Epoch [{epoch + 1}/{num_epochs}],    Val Loss: {avg_val_loss:.4f},    cosinesimilarity: {consimilarity}')
         if avg_val_loss > best_metric:
             best_metric = avg_val_loss
             # 保存最佳模型
@@ -177,16 +180,19 @@ if __name__ == "__main__":
                             help="only CQ")
     arg_parser.add_argument("--network", type=str, default="CQ_Seq2Seq",
                             help="选择网络")
-    arg_parser.add_argument("--lr", type=float, default=0.0001, help="学习率")
+    arg_parser.add_argument("--lr", type=float, default=0.0005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
+    arg_parser.add_argument("--padding_mode", type=str, default="zero",
+                            help="optional: zero, cons")
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = '../train_data'
+    root_dir = 'train_data'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
+    # data_dirs = ['8APSK']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
@@ -195,7 +201,7 @@ if __name__ == "__main__":
     seq_train, seq_val, y_train, y_val = train_test_split(
         sequences, labels, test_size=0.2, random_state=42
     )
-    collate_fn = CollateFunction(args.task)
+    collate_fn = CollateFunction(args.task, args.padding_mode)
     # 创建数据集和数据加载器
     if args.mode == 'train':
         train_dataset = WaveformDataset(seq_train, y_train)
@@ -243,7 +249,7 @@ if __name__ == "__main__":
             encoder = Encoder(input_dim, hidden_dim, n_lays, dropout).to(device)
             decoder = Decoder(output_dim, emb_dim, hidden_dim, n_lays, dropout).to(device)
             # 创建 Seq2Seq 实例
-            model = model_class(encoder, decoder,vocab)
+            model = model_class(encoder, decoder, vocab)
         else:
             model = model_class()
     except (ImportError, AttributeError):
@@ -268,4 +274,3 @@ if __name__ == "__main__":
 
 """测试指令
 python main_backup.py --mode test --task SW --network CNNRegressor --model_path log/models/SymbolWidth/CNNRegressor/0.1495_60.81_best_model.pth"""
-

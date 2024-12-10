@@ -1,18 +1,30 @@
-import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from sklearn.model_selection import train_test_split
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import argparse
-import importlib
+from sklearn.model_selection import train_test_split
 
 from utils.dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils.utils import show_plot
-from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
-import numpy as np
-from utils.cosinesimilarity import cosine_similarity
-from models.CQ_Seq2Seq import Encoder, Decoder
+from utils.cosinesimilarity import cosine_similarity_seq
+from models.IQToCodeSeqModel import IQToCodeSeqModel  # 导入 IQToCodeSeqModel
+import logging
+
+# 配置日志格式和级别
+logging.basicConfig(
+    level=logging.INFO,  # 设置日志级别为INFO
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("training.log"),  # 将日志写入文件
+        logging.StreamHandler()  # 同时输出到控制台
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 
 # 计算码元宽度得分
 def calculate_score(cosine_similarity):
@@ -20,39 +32,27 @@ def calculate_score(cosine_similarity):
         return 100
     elif cosine_similarity <= 0.7:
         return 0
-    return (cosine_similarity-0.7)*400
+    return (cosine_similarity - 0.7) * 400
 
-def output_process(outputs,labels):
-    ## 去除BOS
-    #labels = labels[:,1:]
-    output_seq_len = outputs.size(1)
-    target_seq_len = labels.size(1)
-    max_len = max(output_seq_len, target_seq_len)
 
-    # 如果 outputs 的长度不足 max_len，则在末尾填充
-    if output_seq_len < max_len:
-        padding_size = max_len - output_seq_len
-        padding = torch.full((outputs.size(0), padding_size, outputs.size(2)), fill_value=0,
-                             device=outputs.device)
-        outputs = torch.cat([outputs, padding], dim=1)
+def decode_sequence(indices, vocab):
+    # 定义反向词汇表
+    idx_to_token = {idx: token for token, idx in vocab.items()}
+    tokens = []
+    for idx in indices:
+        token = idx_to_token.get(idx, "<UNK>")
+        if token in ["<PAD>", "<BOS>", "<EOS>"]:
+            continue  # 忽略特殊标记
+        tokens.append(token)
+    return tokens
 
-    # 如果 labels 的长度不足 max_len，则在末尾填充
-    if target_seq_len < max_len:
-        padding_size = max_len - target_seq_len
-        padding = torch.full((labels.size(0), padding_size), fill_value=18,
-                             device=labels.device)
-        labels = torch.cat([labels, padding], dim=1)
 
-    return outputs, labels
-
-def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs,task):
-
-    # 设置最佳指标：码元宽度回归任务以最小化损失为目标，调制类型分类任务以最大化准确率为目标，码序列相似度任务以最大化余弦相似度为目标
-    best_metric = 0
+def train(model, train_loader, val_loader, criterion, optimizer, device, num_epochs, vocab_size):
+    # 设置最佳指标
+    best_metric = -float('inf')  # 余弦相似度越大越好
 
     history_train_loss = []
-    history_valid_loss = []
-
+    history_valid_similarity = []
 
     end_path = "CodeSequence"
 
@@ -63,139 +63,202 @@ def train(model, train_loader, val_loader, criterion, optimizer, device, num_epo
         # 训练阶段
         model.train()
         train_loss = 0
+        batch_count = 0
+        teacher_forcing_ratio = max(0.5, 1.0 - epoch / num_epochs)
+        # logger.info(
+        #     f"Epoch [{epoch + 1}/{num_epochs}] - Starting training with teacher_forcing_ratio={teacher_forcing_ratio:.2f}")
 
-        for batch_X, seq_lengths, batch_y, label_lengths in train_loader:
+        for batch_idx, (batch_X, seq_lengths, batch_y, label_lengths) in enumerate(train_loader, 1):
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             seq_lengths, label_lengths = seq_lengths.to(device), label_lengths.to(device)
 
             # 调整输入数据的形状
-           #  batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+            batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
             optimizer.zero_grad()
+            outputs = model(batch_X, seq_lengths, batch_y, teacher_forcing_ratio)
+            # outputs: (batch_size, tgt_seq_length, vocab_size)
 
-            outputs = model(batch_X, seq_lengths, batch_y, label_lengths)
-            # for i in range(len(outputs)):
-            #     print(outputs[i])
-            outputs, labels = output_process(outputs, batch_y)
-            # for i in range(outputs.size(0)):
-            #     print(f'output:{i}: {outputs[i].argmax(-1)}')
-            #     print(f'labels{i}: {labels[i]}')
-            # 展平张量
-            outputs = outputs.view(-1, outputs.size(-1))  # (batch_size * max_len, output_dim)
-            labels = labels.view(-1)  # (batch_size * max_len)
-            # 定义损失函数，忽略填充符的索引
-            loss = criterion(outputs, labels)
-
-            # loss = criterion(outputs, labels, label_lengths)
+            # 计算损失
+            loss = criterion(outputs.reshape(-1, vocab_size), batch_y.view(-1))
 
             train_loss += loss.item()
             loss.backward()
             optimizer.step()
-        train_loss /= len(train_loader)
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {train_loss:.4f}')
-        history_train_loss.append(train_loss)
+
+            batch_count += 1
+            # 每50个批次记录一次训练损失
+            if batch_count % 50 == 0:
+                avg_loss = train_loss / batch_count
+                logger.info(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch_count}], Train Loss: {avg_loss:.4f}')
+
+
+        Average_train_loss = train_loss / batch_count
+        logger.info(f'Epoch [{epoch + 1}/{num_epochs}] - Average Train Loss: {Average_train_loss:.4f}')
+        history_train_loss.append(Average_train_loss)
 
         # 验证阶段
         model.eval()
-        sum_val_loss = 0.0
+        total_cosine_similarity = 0.0
+        val_batch_count = 0
+        logger.info(f"Epoch [{epoch + 1}/{num_epochs}] - Starting validation")
 
         with torch.no_grad():
-            for batch_X, seq_lengths, batch_y,label_lengths in val_loader:
+            for batch_idx, (batch_X, seq_lengths, batch_y, label_lengths) in enumerate(val_loader, 1):
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                seq_lengths,label_lengths = seq_lengths.to(device),label_lengths.to(device)
+                seq_lengths, label_lengths = seq_lengths.to(device), label_lengths.to(device)
 
-                # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+                # 调整输入数据的形状
+                batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
-                outputs = model(batch_X,seq_lengths,batch_y,label_lengths,use_teacher_forcing=False)
-                # 填充操作
-                outputs, labels = output_process(outputs, batch_y)
+                # 生成序列，不使用教师强制
+                generated_sequences = model(batch_X, seq_lengths)
+                # generated_sequences: (batch_size, max_seq_length)
 
-                consimilarity = cosine_similarity(outputs.argmax(dim=-1),labels,label_lengths)
-                # 展平张量
-                outputs = outputs.view(-1, outputs.size(-1))  # (batch_size * max_len, output_dim)
-                labels = labels.view(-1)  # (batch_size * max_len)
-                # 取整
-                # outputs = torch.round(outputs).to(torch.int64)
-                loss = criterion(outputs, labels)
-                sum_val_loss += loss.item()
+                # 计算余弦相似度
+                # 由于第一个序列是 <BOS>，因此不计算
+                consimilarity = cosine_similarity_seq(generated_sequences[:, 1:], batch_y, label_lengths)
+                total_cosine_similarity += consimilarity
 
-        avg_val_loss = sum_val_loss / len(val_loader)  # 计算平均损失
+                val_batch_count += 1
 
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Val Loss: {avg_val_loss:.4f},cosinesimilarity: {consimilarity}')
-        if avg_val_loss > best_metric:
-            best_metric = avg_val_loss
-            # 保存最佳模型
+                # 每10个批次计算一次余弦相似度
+                if val_batch_count % 10 == 0:
+                    avg_cosine = total_cosine_similarity / val_batch_count
+                    logger.info(
+                        f'Epoch [{epoch + 1}/{num_epochs}], Val Batch [{val_batch_count}], Cosine Similarity: {avg_cosine:.4f}')
+
+
+        # 计算每个epoch的平均余弦相似度
+
+        avg_cosine_similarity = total_cosine_similarity / val_batch_count
+        logger.info(f'Epoch [{epoch + 1}/{num_epochs}] - Average Val CosineSimilarity: {avg_cosine_similarity:.4f}')
+        history_valid_similarity.append(avg_cosine_similarity)
+
+
+        # 保存最佳模型基于余弦相似度
+        if avg_cosine_similarity > best_metric:
+            best_metric = avg_cosine_similarity
             torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-        history_valid_loss.append(avg_val_loss)
+            logger.info(f'Best model saved with Cosine Similarity: {best_metric:.4f}')
 
     # 保存最终模型
-    torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
+    torch.save(model.state_dict(), os.path.join(model_dir, 'final_model.pth'))
+    logger.info('Final model saved.')
 
     # loss图保存路径
     save_path = f'log/save_loss/{end_path}/{model.__class__.__name__}'
     os.makedirs(save_path, exist_ok=True)
-    show_plot(history_train_loss, history_valid_loss,
-              f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
+    show_plot(history_train_loss, history_valid_similarity,
+              f"{save_path}/{model.__class__.__name__}.png")
+    logger.info('Training and validation plots saved.')
 
 
-def test(model, val_loader, criterion, device, model_path, task):
+def test(model, val_loader, criterion, device, model_path, vocab):
     # 加载已保存的模型权重
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"模型已成功加载: {model_path}")
+        logger.info(f"模型已成功加载: {model_path}")
     else:
-        print(f"模型文件不存在: {model_path}")
+        logger.error(f"模型文件不存在: {model_path}")
         return
 
     model.eval()
 
     sum_val_loss = 0.0
+    total_cosine_similarity = 0.0
+    val_batch_count = 0
+
+    generated_sequences_all = []
+    labels_all = []
+
+    logger.info("开始测试...")
 
     with torch.no_grad():
-        for batch_X, seq_lengths, batch_y, label_lengths in val_loader:
+        for batch_idx, (batch_X, seq_lengths, batch_y, label_lengths) in enumerate(val_loader, 1):
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            seq_lengths,label_lengths = seq_lengths.to(device),label_lengths.to(device)
+            seq_lengths, label_lengths = seq_lengths.to(device), label_lengths.to(device)
 
-            # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+            # 调整输入数据的形状
+            batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
-            outputs = model(batch_X,seq_lengths,batch_y,label_lengths,use_teacher_forcing=False)
+            # 生成序列，不使用教师强制
+            generated_sequences = model(batch_X, seq_lengths)
+            # generated_sequences: (batch_size, max_seq_length)
 
-            outputs = torch.round(outputs).to(torch.int64)
-            loss = criterion(outputs, batch_y, label_lengths)
-            sum_val_loss += loss.item()
+            # 收集生成序列和标签
+            generated_sequences_all.append(generated_sequences.cpu())
+            labels_all.append(batch_y.cpu())
 
-    avg_val_loss = sum_val_loss / len(val_loader)  # 计算平均损失
-    cosine_similarity = 1 - avg_val_loss
-    print(f'Val Loss: {avg_val_loss:.4f}, CosineSimilarity:{cosine_similarity:.4f}')
-    print(f'CodeSequence Score: {calculate_score(cosine_similarity):.2f}')
+            # 计算余弦相似度
+            consimilarity = cosine_similarity_seq(generated_sequences[:,1:], batch_y, label_lengths)
+            total_cosine_similarity += consimilarity
+
+            val_batch_count += 1
+
+            # 每20个批次记录一次余弦相似度
+            if val_batch_count % 20 == 0:
+                avg_cosine = total_cosine_similarity / val_batch_count
+                logger.info(f'Test Batch [{val_batch_count}], Cosine Similarity: {avg_cosine:.4f}')
+
+    # 拼接所有批次
+    generated_sequences_all = torch.cat(generated_sequences_all, dim=0)  # (total_samples, max_seq_length)
+    labels_all = torch.cat(labels_all, dim=0)  # (total_samples, max_seq_length)
+
+    # 解码生成的序列
+    decoded_generated = [decode_sequence(seq, vocab) for seq in generated_sequences_all]
+    decoded_labels = [decode_sequence(seq, vocab) for seq in labels_all]
+
+    # 计算最终的余弦相似度
+    avg_cosine_similarity = total_cosine_similarity / val_batch_count
+    final_score = calculate_score(avg_cosine_similarity)
+    logger.info(f'Final Val CosineSimilarity: {avg_cosine_similarity:.4f}')
+    logger.info(f'CodeSequence Score: {final_score:.2f}')
 
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser("Train or test the model")
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
-    arg_parser.add_argument("--task", type=str, default="CQ",
-                            help="only CQ")
-    arg_parser.add_argument("--network", type=str, default="CQ_Seq2Seq",
-                            help="选择网络: CQ_Seq2Seq")
+    arg_parser.add_argument("--task", type=str, default="CQ", help="only CQ")
+    arg_parser.add_argument("--network", type=str, default="IQToCodeSeqModel", help="选择网络: IQToCodeSeqModel")
     arg_parser.add_argument("--lr", type=float, default=0.0001, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=50, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=512, help="批次大小")
-    arg_parser.add_argument("--model_path", type=str, default="",
-                            help="模型文件路径，用于测试模式")
+    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
+    arg_parser.add_argument("--model_path", type=str, default="", help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
+    # 定义词汇表
+    vocab = {
+        "<PAD>": 0, "<BOS>": 1, "<EOS>": 2,
+        "0": 3, "1": 4, "2": 5, "3": 6, "4": 7, "5": 8, "6": 9, "7": 10, "8": 11, "9": 12, "10": 13,
+        "11": 14, "12": 15, "13": 16, "14": 17, "15": 18, "16": 19, "17": 20, "18": 21, "19": 22, "20": 23,
+        "21": 24, "22": 25, "23": 26, "24": 27, "25": 28, "26": 29, "27": 30, "28": 31, "29": 32, "30": 33,
+        "31": 34
+    }
+    vocab_size = len(vocab)
+
     # 指定根目录
-    root_dir = '/mnt/data/LXP/data/train_data'
-    data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
+    root_dir = "/mnt/data/JWS/Big-data-contest/train_data/"
+    # root_dir = "/home/JWS/Big_data_contest/train_data/"
+    data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK', '16QAM', '32APSK', '32QAM', 'BPSK', 'MSK', 'QPSK']
+    # data_dirs = ['8APSK']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     # 读取数据
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
 
+    # 将标签映射到词汇表索引
+    mapped_labels = []
+    for seq in labels:
+        mapped_seq = [vocab.get(str(token.item()), vocab["<PAD>"]) for token in seq]
+        mapped_labels.append(mapped_seq)
+
     # 划分训练集和验证集
     seq_train, seq_val, y_train, y_val = train_test_split(
-        sequences, labels, test_size=0.2, random_state=42
+        sequences, mapped_labels, test_size=0.2, random_state=42
     )
-    collate_fn = CollateFunction(args.task)
+    collate_fn = CollateFunction(args.task, vocab)
+
     # 创建数据集和数据加载器
     if args.mode == 'train':
         train_dataset = WaveformDataset(seq_train, y_train)
@@ -208,64 +271,36 @@ if __name__ == "__main__":
     else:
         raise ValueError("无效的模式，请选择 'train' 或 'test'")
 
-    # 动态导入或选择网络模型
-    try:
-        module = importlib.import_module(f"models.{args.network}")
-        model_class = getattr(module, args.network)
-        if args.network == "CQ_Seq2Seq":
-            input_dim = 2  # IQ流的输入维度
-            output_dim = 35  # 码序列的词汇表大小
-            emb_dim = 64  # 嵌入维度
-            hidden_dim = 128  # 隐藏层维度
-            n_lays = 2  # LSTM层数
-            dropout = 0.5  # Dropout概率
-            vocab = {
-                "<BOS>": 16,  # Begin of Sequence 起始符
-                "<EOS>": 17,  # End of Sequence 结束符
-                "<PAD>": 18,
-                "0": 0,
-                "1": 1,
-                "2": 2,
-                "3": 3,
-                "4": 4,
-                "5": 5,
-                "6": 6,
-                "7": 7,
-                "8": 8,
-                "9": 9,
-                "10": 10,
-                "11": 11,
-                "12": 12,
-                "13": 13,
-                "14": 14,
-                "15": 15
-            }
-            encoder = Encoder(input_dim, hidden_dim, n_lays, dropout).to(device)
-            decoder = Decoder(output_dim, emb_dim, hidden_dim, n_lays, dropout).to(device)
-            # 创建 Seq2Seq 实例
-            model = model_class(encoder, decoder, vocab)
-        else:
-            model = model_class()
-    except (ImportError, AttributeError):
+    # 实例化 IQToCodeSeqModel
+    if args.network == "IQToCodeSeqModel":
+        model = IQToCodeSeqModel(
+            vocab_size=vocab_size,
+            bos_idx=vocab["<BOS>"],  # 传递 <BOS> 的索引
+            embed_dim=128,
+            num_heads=2,
+            num_encoder_layers=2,
+            num_decoder_layers=2,
+            max_seq_length=450
+        ).to(device)
+
+        # 使用 DataParallel
+        if torch.cuda.device_count() > 1:
+            model = nn.DataParallel(model, device_ids=[0, 1, 2])
+            print(f"使用 {torch.cuda.device_count()} 张 GPU")
+
+    else:
         raise ValueError(f"指定的网络 {args.network} 无效或不存在")
 
     # 定义损失函数和优化器
-    #criterion = CosineSimilarityLoss()
-    criterion = nn.CrossEntropyLoss(ignore_index=18)
-
+    criterion = nn.CrossEntropyLoss(ignore_index=vocab["<PAD>"])
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-
-    model.to(device)
 
     if args.mode == 'train':
         # 训练模型
-        train(model, train_loader, val_loader, criterion, optimizer, device, args.epochs, args.task)
+        train(model, train_loader, val_loader, criterion, optimizer, device, args.epochs,vocab_size)
+
     elif args.mode == 'test':
         if not args.model_path:
             print("测试模式需要指定模型文件路径，请使用 --model_path 参数。")
             exit(1)
-        test(model, val_loader, criterion, device, args.model_path, args.task)
-
-"""测试指令
-python main_backup.py --mode test --task SW --network CNNRegressor --model_path log/models/SymbolWidth/CNNRegressor/0.1495_60.81_best_model.pth"""
-
+        test(model, val_loader, criterion, device, args.model_path,vocab)

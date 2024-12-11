@@ -8,8 +8,9 @@ from torch.nn.utils.rnn import pad_sequence
 # 自定义collate_fn类，用于处理变长序列
 # 在处理变长序列时，默认的 DataLoader 无法将不同长度的序列组合成一个批次，因此需要自定义 collate_fn 函数来实现填充操作。
 class CollateFunction:
-    def __init__(self,train_mode = None):
+    def __init__(self,train_mode = None,vocab = None):
         self.train_mode = train_mode
+        self.vocab = vocab
     def __call__(self,batch):
         sequences = [item[0] for item in batch]  # IQ 序列
         # 获取序列长度
@@ -24,8 +25,8 @@ class CollateFunction:
         elif self.train_mode == "CQ":       # 码序列生成
             labels = [torch.tensor(item[1], dtype=torch.long) for item in batch] #每一个码序列是一个tensor
             label_lengths = torch.tensor([len(label) for label in labels], dtype=torch.long)
-            # 填充标签，使用 -1 作为填充值
-            labels = pad_sequence(labels, batch_first=True, padding_value=-1)
+            # 填充标签，使用PAD作为填充值
+            labels = pad_sequence(labels, batch_first=True, padding_value=self.vocab["<PAD>"])
             return padded_sequences, seq_lengths, labels, label_lengths
         else:
             raise ValueError(f"无效的 train_mode 参数: {self.train_mode}")

@@ -12,6 +12,7 @@
 | CNN*2_LSTM      | 0.005         | 2048       | 62.63    | overfitting |
 | CNN*3_LSTM*2            | 0.005         | 2048       | 27.24    | 填充循环序列      |
 | CNN*3_LSTM*2_可分离卷积_残差网络 | 0.005         | 2048       | 61.2     | overfitting |
+| CNN*3_LSTM*2_每层加上dropout_随机取512| 0.005         | 2048       | 54.80   | 不太好 |
 
 ## task 2 
 ### experiment result:

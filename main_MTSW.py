@@ -10,7 +10,19 @@ from utils.dataset import load_data_from_directories, WaveformDataset, CollateFu
 from utils.utils import show_plot
 from Criterion.SW_RelativeErrorLoss import RelativeErrorLoss
 from sklearn.metrics import mean_squared_error
+import random
 import numpy as np
+import torch.backends.cudnn as cudnn
+
+def set_random_seed(seed):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    cudnn.benchmark = False
+    cudnn.deterministic = True
 # 计算码元宽度得分
 def calculate_score(relative_error):
     if relative_error <= 0.05:
@@ -89,7 +101,8 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
         with torch.no_grad():
             for seq, val in zip(seq_val, y_val):
                 seq = seq.to(device)  # 将seq移动到device
-                val = torch.tensor(val, device=device)
+                val = val.clone().detach().to(device)
+                
                 seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
                 seq = seq.permute(0, 2, 1)  # [batch_size, channels, seq_len]
                 # 单个验证样本的模型输出
@@ -114,17 +127,22 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
         else:
 
-            accuracy = 100 * correct / len(seq_val)
+            accuracy = correct / len(seq_val)
             accuracy = accuracy.item()
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {accuracy:.2f}%')
-            f.write(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {accuracy:.2f}%' +'\n')
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {100*accuracy:.2f}%')
+            f.write(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {100*accuracy:.2f}%' +'\n')
             if accuracy > best_metric:
                 best_metric = accuracy
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-
+        history_valid_loss.append(best_metric)
     # 保存最终模型
     torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
+        # loss图保存路径
+    save_path = f'log/save_loss/{end_path}/{model.__class__.__name__}'
+    os.makedirs(save_path, exist_ok=True)
+    show_plot(history_train_loss, history_valid_loss,
+              f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
     f.close()
 
 
@@ -197,19 +215,20 @@ def test(model, val_loader, criterion, device, model_path, task):
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser("Train or test the model")
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
-    arg_parser.add_argument("--task", type=str, default="SW",
+    arg_parser.add_argument("--task", type=str, default="MT",
                             help="MT(ModulationType)、SW(SymbolWidth)")
     arg_parser.add_argument("--network", type=str, default="CNN_Regressor_LSTM",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
+    set_random_seed(42)
 
     # 指定根目录
-    root_dir = '/mnt/data/LXP/data/train_data'
+    root_dir = '/mnt/data/JWS/Big-data-contest/train_data'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
     # data_dirs = ['8APSK']
 
@@ -262,7 +281,7 @@ if __name__ == "__main__":
     #
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model.to(device)
-    device = torch.device('cuda:7' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
     if args.mode == 'train':

@@ -15,6 +15,20 @@ from utils.utils import show_plot
 from utils.cosinesimilarity import cosine_similarity_seq
 from models.IQToCodeSeqModel import IQToCodeSeqModel  # 导入 IQToCodeSeqModel
 import logging
+import random
+import numpy as np
+import torch.backends.cudnn as cudnn
+
+def set_random_seed(seed):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    cudnn.benchmark = False
+    cudnn.deterministic = True
+# 计算码元宽度得分
 
 # 配置日志格式和级别
 logging.basicConfig(

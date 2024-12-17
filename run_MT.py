@@ -21,13 +21,13 @@ def main():
     # 划分训练集和验证集
     seq_train, seq_val, y_train, y_val = train_test_split(sequences, labels, test_size=0.2, random_state=42)
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    MT_model_path = r"/mnt/data/LWP/Signal-Test/log/models/ModulationType/CNN_LSTM_Classifier/best_model.pth"
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    MT_model_path = r"/mnt/data/JWS/Big-data-contest/log/models/ModulationType/CNN_LSTM_Classifier/MT_best_model.pth"
     MT_model = CNN_LSTM_Classifier()
 
     # 加载模型
     if os.path.exists(MT_model_path):
-        MT_model.load_state_dict(torch.load(MT_model_path, map_location=device))
+        MT_model.load_state_dict(torch.load(MT_model_path, map_location=device, weights_only=True))
         print(f"模型已成功加载: {MT_model_path}")
     else:
         print(f"模型文件不存在: {MT_model_path}")
@@ -39,15 +39,15 @@ def main():
     with torch.no_grad():
         for idx, val in enumerate(seq_val):
 
-            sequence = val.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
-            sequence = sequence.permute(0, 2, 1)  # 转置，变为 [1, 2, 1727]
+            sequence = val.unsqueeze(0)  # 增加一个 batch_size 维度
+            sequence = sequence.permute(0, 2, 1)  # 转置
 
             # 预测调制类型
             logits = MT_model(sequence)
             modulation_type = torch.argmax(logits, dim=1) + 1  # 调制类型预测
             real_label = y_val[idx] + 1  # 实际标签加 1
 
-            print(f'模型预测调制类型：{modulation_type.item()}, 实际真实label:{real_label}')
+            # print(f'模型预测调制类型：{modulation_type.item()}, 实际真实label:{real_label}')
 
             if real_label == modulation_type:
                 correct += 1

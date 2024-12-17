@@ -31,13 +31,13 @@ def main():
     # 划分训练集和验证集
     seq_train, seq_val, y_train, y_val = train_test_split(sequences, labels, test_size=0.2, random_state=42)
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    SW_model_path = r'/mnt/data/LWP/Signal-Test/log/models/SymbolWidth/CNN_Regressor_LSTM/0.0486_88.74_best_model.pth'
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    SW_model_path = r'/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/CNN_Regressor_LSTM/SW_best_model.pth'
     SW_model = CNN_Regressor_LSTM()
 
     # 加载模型
     if os.path.exists(SW_model_path):
-        SW_model.load_state_dict(torch.load(SW_model_path, map_location=device))
+        SW_model.load_state_dict(torch.load(SW_model_path, map_location=device, weights_only=True))
         print(f"模型已成功加载: {SW_model_path}")
     else:
         print(f"模型文件不存在: {SW_model_path}")
@@ -48,12 +48,14 @@ def main():
     all_score = 0
     with torch.no_grad():
         for idx, val in enumerate(seq_val):
-            sequence = val.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
-            sequence = sequence.permute(0, 2, 1)  # 转置，变为 [1, 2, 1727]
+            sequence = val.unsqueeze(0)  # 增加一个 batch_size 维度
+            sequence = sequence.permute(0, 2, 1)  # 转置
 
             # 预测码元宽度
             predict_SW = SW_model(sequence).item()
-            score_error = np.abs(predict_SW - y_val[idx])
+            predict_SW = round(predict_SW/0.05)*0.05
+            label = round(y_val[idx], 2)
+            score_error = np.abs(predict_SW - label)
             score = calculate_score(score_error)
             print(f"模型预测宽度：{predict_SW:.2f}            真实标签：{y_val[idx]}")
             all_score += score

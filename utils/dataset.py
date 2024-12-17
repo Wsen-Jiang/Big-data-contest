@@ -23,7 +23,9 @@ class CollateFunction:
         elif self.train_mode == "SW":       # 回归任务
             labels = torch.tensor([item[1] for item in batch], dtype=torch.float32)
         elif self.train_mode == "CQ":       # 码序列生成
-            labels = [torch.tensor(item[1], dtype=torch.long) for item in batch] #每一个码序列是一个tensor
+            # labels = [torch.tensor(item[1], dtype=torch.long) for item in batch] #每一个码序列是一个tensor
+            labels = [item[1].clone().detach().long() if isinstance(item[1], torch.Tensor) else torch.tensor(item[1],
+            dtype=torch.long) for item in batch]
             label_lengths = torch.tensor([len(label) for label in labels], dtype=torch.long)
             # 填充标签，使用PAD作为填充值
             labels = pad_sequence(labels, batch_first=True, padding_value=self.vocab["<PAD>"])

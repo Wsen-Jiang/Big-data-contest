@@ -10,7 +10,7 @@
 | CNN*3_LSTM      | 0.003         | 2048       | 60.03    |     | overfitting |
 | CNN*3_LSTM      | 0.005         | 2048       | 60.81    |     | overfitting |
 | CNN*3_GRU       | 0.005         | 4096       | 43.32    |     | overfitting |
-| CNN*2_LSTM      | 0.005         | 2048       | 62.63    | 55.57 | overfitting |
+| CNN*2_LSTM      | 0.005         | 2048       | 62.63    | 56.94    | overfitting |
 | CNN*3_LSTM*2            | 0.005         | 2048       | 27.24    |     | 填充循环序列      |
 | CNN*3_LSTM*2_可分离卷积_残差网络 | 0.005         | 2048       | 61.2     |      | overfitting |
 
@@ -31,3 +31,4 @@
 
 ## Leaderboard
 ![Image text](https://github.com/WenSen-Jiang/Big-data-contest/blob/main/fig/leaderboard.png)
+

@@ -7,6 +7,7 @@ def cosine_similarity_seq(pred, target, lengths, padding_value=0):
     # lengths: (batch_size,) 各个样本的实际长度
     device = pred.device
     batch_size, max_target_len = target.size()
+    pred = pred.argmax(dim=-1)
     _,max_pred_len = pred.size()
 
 

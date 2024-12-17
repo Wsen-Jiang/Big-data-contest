@@ -9,7 +9,7 @@ import importlib
 from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils import show_plot
 from Criterion.SW_RelativeErrorLoss import RelativeErrorLoss
-from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
+from Criterion.CosineSimilarityLoss import CosineSimilarityLoss
 from sklearn.metrics import mean_squared_error
 import numpy as np
 

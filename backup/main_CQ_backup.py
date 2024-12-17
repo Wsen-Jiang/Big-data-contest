@@ -9,7 +9,7 @@ import importlib
 
 from dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils.utils import show_plot
-from Criterion.CQ_CosineSimilarity import CosineSimilarityLoss
+from Criterion.CosineSimilarityLoss import CosineSimilarityLoss
 import numpy as np
 from utils.cosinesimilarity import cosine_similarity
 from models.CQ_Seq2Seq import Encoder, Decoder

@@ -7,22 +7,15 @@ from sklearn.model_selection import train_test_split
 import argparse
 import importlib
 from utils.dataset import load_data_from_directories, WaveformDataset, CollateFunction
-from utils.utils import show_plot
+from utils.utils import show_plot, set_random_seed
 from Criterion.SW_RelativeErrorLoss import RelativeErrorLoss
 from sklearn.metrics import mean_squared_error
-import random
 import numpy as np
-import torch.backends.cudnn as cudnn
+from tqdm import tqdm
+from utils.utils import show_plot
 
-def set_random_seed(seed):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    cudnn.benchmark = False
-    cudnn.deterministic = True
+
+
 # 计算码元宽度得分
 def calculate_score(relative_error):
     if relative_error <= 0.05:
@@ -36,10 +29,10 @@ def calculate_score(relative_error):
 # Gradient Clipping (to prevent gradient explosion)
 max_norm = 5.0
 
-def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_epochs, task):
-
+def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num_epochs, task):
     # 设置最佳指标：码元宽度回归任务以最小化损失为目标，调制类型分类任务以最大化准确率为目标，码序列相似度任务以最大化余弦相似度为目标
-    best_metric =0
+    best_metric = 0
+    best_epoch = 0
 
     history_train_loss = []
     history_valid_loss = []
@@ -60,15 +53,16 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
         # 训练阶段
         model.train()
         train_loss = 0
+        correct_train = 0
+        total_train = 0
 
-        for batch_X, seq_lengths, batch_y in train_loader:
+        for batch_X, seq_lengths, batch_y in tqdm(train_loader):
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             seq_lengths = seq_lengths.to(device)
 
             # 调整输入数据的形状
-            batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+            # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
-            # print("Input shape:", batch_X.shape)
             # Gradient clipping to prevent explosion
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
@@ -82,13 +76,20 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
                 loss = criterion(outputs, batch_y)  # 分类任务
 
             train_loss += loss.item()
+
+            if task == "MT":
+                # 计算分类准确率
+                _, predicted = torch.max(outputs.data, 1)
+                total_train += batch_y.size(0)
+                correct_train += (predicted == batch_y).sum().item()
+
             loss.backward()
             optimizer.step()
-        # Step the scheduler
-        # scheduler.step()
 
+        # 计算训练集损失和准确率
         train_loss /= len(train_loader)
         history_train_loss.append(train_loss)
+
 
         # 验证阶段
         model.eval()
@@ -102,48 +103,62 @@ def train(model, train_loader, seq_val,y_val, criterion, optimizer, device, num_
             for seq, val in zip(seq_val, y_val):
                 seq = seq.to(device)  # 将seq移动到device
                 val = val.clone().detach().to(device)
-                
+
                 seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
-                seq = seq.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+
                 # 单个验证样本的模型输出
+                seq = seq.permute(0, 2, 1)
                 outputs = model(seq)
 
                 if task == "SW":
                     predict_SW = outputs.item()
                     score_error = np.abs(predict_SW - val.item())
                     score = calculate_score(score_error)
-                    # print(f"当前样本的得分是：{score:.2f}")
                     mean_score += score
                 else:
+                    val = val.unsqueeze(0) # tensor([8])
+                    valid_loss = criterion(outputs, val)
+                    sum_val_loss += valid_loss
                     modulation_type = torch.argmax(outputs, dim=1) + 1  # 调制类型预测
                     correct += (modulation_type == (val+1))
+
+
         if task == "SW":
             mean_score /= len(seq_val)
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Mean score: {mean_score:.2f}%')
-            f.write(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {mean_score:.2f}%' + '\n')
+            print(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f},  Validation Mean Score: {mean_score:.2f}%')
+            f.write(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f}, Validation Mean Score: {mean_score:.2f}%' + '\n')
             if mean_score > best_metric:
                 best_metric = mean_score
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
         else:
-
-            accuracy = correct / len(seq_val)
+            # 验证集准确率
+            accuracy = 100 * correct / len(seq_val)
             accuracy = accuracy.item()
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {100*accuracy:.2f}%')
-            f.write(f'Epoch [{epoch + 1}/{num_epochs}], Accuracy: {100*accuracy:.2f}%' +'\n')
+            # 训练集准确率
+            accuracy_train = 100 * correct_train / total_train
+            # 验证集损失
+            valid_mean_loss = sum_val_loss / len(y_val)
+            history_valid_loss.append(valid_mean_loss)
+
+            print(f'Epoch [{epoch + 1}/{num_epochs}],  Train Loss: {train_loss:.4f}, Train Accuracy: {accuracy_train:.2f}%, Validation Loss: {valid_mean_loss:.4f}, Validation Accuracy: {accuracy:.2f}%')
+            f.write(f'Epoch [{epoch + 1}/{num_epochs}],  Train Loss: {train_loss:.4f}, Train Accuracy: {accuracy_train:.2f}%, Validation Loss: {valid_mean_loss:.4f}, Validation Accuracy: {accuracy:.2f}%' + '\n')
             if accuracy > best_metric:
                 best_metric = accuracy
+                best_epoch = epoch
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-        history_valid_loss.append(best_metric)
+    print(f"在第{best_epoch}轮，验证集上最优得分:{best_metric}")
+
     # 保存最终模型
-    torch.save(model.state_dict(), os.path.join(model_dir,'final_model.pth'))
-        # loss图保存路径
+    torch.save(model.state_dict(), os.path.join(model_dir, 'final_model.pth'))
+    f.close()
+
+    # loss图保存路径
     save_path = f'log/save_loss/{end_path}/{model.__class__.__name__}'
     os.makedirs(save_path, exist_ok=True)
     show_plot(history_train_loss, history_valid_loss,
               f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
-    f.close()
 
 
 def test(model, val_loader, criterion, device, model_path, task):
@@ -170,7 +185,7 @@ def test(model, val_loader, criterion, device, model_path, task):
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             seq_lengths = seq_lengths.to(device)
 
-            batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+            # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
 
             outputs = model(batch_X)
 
@@ -213,22 +228,23 @@ def test(model, val_loader, criterion, device, model_path, task):
         print(f"总得分: {total_score:.2f}")
 
 if __name__ == "__main__":
+
+    set_random_seed(42)
     arg_parser = argparse.ArgumentParser("Train or test the model")
     arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
-    arg_parser.add_argument("--task", type=str, default="MT",
+    arg_parser.add_argument("--task", type=str, default="SW",
                             help="MT(ModulationType)、SW(SymbolWidth)")
     arg_parser.add_argument("--network", type=str, default="CNN_Regressor_LSTM",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
+    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
-    set_random_seed(42)
 
     # 指定根目录
-    root_dir = '/mnt/data/JWS/Big-data-contest/train_data'
+    root_dir = '../../competition_signal/Big-data-contest-main/data/IQ/'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
     # data_dirs = ['8APSK']
 
@@ -238,7 +254,7 @@ if __name__ == "__main__":
     # 划分训练集和验证集
 
     seq_train, seq_val, y_train, y_val = train_test_split(
-        sequences, labels, test_size=0.2, random_state=42
+        sequences, labels, test_size=0.2, random_state=42, 
     )
     collate_fn = CollateFunction(args.task)
     # 创建数据集和数据加载器
@@ -270,17 +286,6 @@ if __name__ == "__main__":
         raise ValueError(f"无效的 task 参数: {args.task}")
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=1e-5)
-    # optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
-    # 加入学习率自动调节
-    # scheduler = StepLR(optimizer, step_size=10, gamma=0.5)
-
-    # Wrap the model for multi-GPU
-    # if torch.cuda.device_count() > 1:
-    #     print(f"Using {torch.cuda.device_count()} GPUs")
-    #     model = nn.DataParallel(model)
-    #
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # model.to(device)
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 

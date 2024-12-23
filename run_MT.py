@@ -1,6 +1,6 @@
 import os
 import torch
-from models.CNN_LSTM_Classifier import CNN_LSTM_Classifier
+from models.ResBlock_Classifier import ResBlock_Classifier
 from utils.dataset import load_data_from_directories
 from sklearn.model_selection import train_test_split
 
@@ -21,9 +21,10 @@ def main():
     # 划分训练集和验证集
     seq_train, seq_val, y_train, y_val = train_test_split(sequences, labels, test_size=0.2, random_state=42)
 
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
-    MT_model_path = r"/mnt/data/JWS/Big-data-contest/log/models/ModulationType/CNN_LSTM_Classifier/MT_best_model.pth"
-    MT_model = CNN_LSTM_Classifier()
+    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+    MT_model_path = r"/home/JWS/Big-data-contest/log/models/ModulationType/ResBlock_Classifier/best_model.pth"
+    MT_model = ResBlock_Classifier()
+    MT_model.to(device)
 
     # 加载模型
     if os.path.exists(MT_model_path):
@@ -36,24 +37,39 @@ def main():
     # 开始预测
     MT_model.eval()
     correct = 0
+    list = []
     with torch.no_grad():
-        for idx, val in enumerate(seq_val):
+        for seq, val in zip(seq_val, y_val):
 
-            sequence = val.unsqueeze(0)  # 增加一个 batch_size 维度
-            sequence = sequence.permute(0, 2, 1)  # 转置
+            seq = seq.to(device)  # 将seq移动到device
+            val = val.clone().detach().to(device)
+            seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
 
-            # 预测调制类型
-            logits = MT_model(sequence)
-            modulation_type = torch.argmax(logits, dim=1) + 1  # 调制类型预测
-            real_label = y_val[idx] + 1  # 实际标签加 1
+            # 单个验证样本的模型输出
+            seq = seq.permute(0, 2, 1)
+            outputs = MT_model(seq)
+
+            logits = torch.nn.functional.softmax(outputs, dim=1)
+            # 选出最高的概率
+            max_score = torch.max(logits).item()
+            list.append(max_score)
+
+            modulation_type = torch.argmax(outputs, dim=1) + 1  # 调制类型预测
+            correct += (modulation_type == (val+1))
 
             # print(f'模型预测调制类型：{modulation_type.item()}, 实际真实label:{real_label}')
 
-            if real_label == modulation_type:
-                correct += 1
-
     accuracy = correct / len(seq_val)
-    print(f"准确率为：{accuracy:.4f}")
+    print(f"准确率为：{accuracy.item():.4f}")
+    return list
 
 if __name__ == "__main__":
-    main()
+    list = main()
+    # 绘制list散点图
+    import matplotlib.pyplot as plt
+
+    plt.scatter(range(len(list)), list)
+    plt.xlabel('Sample Index')
+    plt.ylabel('Prediction Scores')
+    plt.title('Scatter Plot of Prediction Scores')
+    plt.show()

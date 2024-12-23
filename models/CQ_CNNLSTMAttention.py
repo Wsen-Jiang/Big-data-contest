@@ -62,7 +62,7 @@ class EncoderCNNBiLSTM(nn.Module):
                  cnn_out_channels=64,
                  kernel_size=3,
                  hidden_dim=128,
-                 num_layers=1,
+                 num_layers=2,
                  dropout=0.1):
         super(EncoderCNNBiLSTM, self).__init__()
         self.cnn = nn.Sequential(
@@ -121,7 +121,7 @@ class DecoderAttnLSTM(nn.Module):
     解码器：单向LSTM + Bahdanau Attention
     """
 
-    def __init__(self, vocab_size, embed_dim, enc_hidden_dim, dec_hidden_dim, num_layers=1, dropout=0.1):
+    def __init__(self, vocab_size, embed_dim, enc_hidden_dim, dec_hidden_dim, num_layers=2, dropout=0.1):
         super(DecoderAttnLSTM, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         self.lstm = nn.LSTM(
@@ -181,7 +181,7 @@ class DecoderAttnLSTM(nn.Module):
         outputs = torch.zeros(batch_size, tgt_seq_len, self.fc_out.out_features, device=tgt.device)
 
         input_token = tgt[:, 0]  # 第0个token通常是<BOS>
-        for t in range(1, tgt_seq_len):
+        for t in range(tgt_seq_len - 1):
             output_step, hidden, cell, attn_weights = self.forward_step(
                 input_tokens=input_token,
                 last_hidden=hidden,
@@ -202,9 +202,6 @@ class DecoderAttnLSTM(nn.Module):
 
 
 class CQ_CNNLSTMAttention(nn.Module):
-    """
-    组合Encoder + Decoder的完整Seq2Seq
-    """
 
     def __init__(self,
                  vocab_size,

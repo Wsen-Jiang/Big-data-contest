@@ -34,6 +34,7 @@ def main():
     device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
     SW_model_path = r'/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/CNN_Regressor_LSTM/SW_best_model.pth'
     SW_model = CNN_Regressor_LSTM()
+    SW_model.to(device)
 
     # 加载模型
     if os.path.exists(SW_model_path):
@@ -47,17 +48,18 @@ def main():
     SW_model.eval()
     all_score = 0
     with torch.no_grad():
-        for idx, val in enumerate(seq_val):
-            sequence = val.unsqueeze(0)  # 增加一个 batch_size 维度
-            sequence = sequence.permute(0, 2, 1)  # 转置
+        for seq, val in zip(seq_val, y_val):
+            seq = seq.to(device)
+            seq = seq.unsqueeze(0)
+            val = val.clone().detach().to(device)
 
             # 预测码元宽度
-            predict_SW = SW_model(sequence).item()
+            predict_SW = SW_model(seq).item()
             predict_SW = round(predict_SW/0.05)*0.05
-            label = round(y_val[idx], 2)
+            label = round(val, 2)
             score_error = np.abs(predict_SW - label)
             score = calculate_score(score_error)
-            print(f"模型预测宽度：{predict_SW:.2f}            真实标签：{y_val[idx]}")
+            print(f"模型预测宽度：{predict_SW:.2f}            真实标签：{val}")
             all_score += score
 
     accuracy = (all_score / len(seq_val))

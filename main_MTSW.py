@@ -13,6 +13,7 @@ from sklearn.metrics import mean_squared_error
 import numpy as np
 from tqdm import tqdm
 from utils.utils import show_plot
+import matplotlib.pyplot as plt
 
 
 
@@ -116,7 +117,7 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
                     score = calculate_score(score_error)
                     mean_score += score
                 else:
-                    val = val.unsqueeze(0) # tensor([8])
+                    val = val.unsqueeze(0)
                     valid_loss = criterion(outputs, val)
                     sum_val_loss += valid_loss
                     modulation_type = torch.argmax(outputs, dim=1) + 1  # 调制类型预测
@@ -161,10 +162,10 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
               f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
 
 
-def test(model, val_loader, criterion, device, model_path, task):
+def test(model, seq_val, y_val, device, model_path, task):
     # 加载已保存的模型权重
     if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         print(f"模型已成功加载: {model_path}")
     else:
         print(f"模型文件不存在: {model_path}")
@@ -172,60 +173,67 @@ def test(model, val_loader, criterion, device, model_path, task):
 
     model.eval()
 
-    val_loss = 0.0
     if task == "MT":
         correct = 0
-        total = 0
+        list = []
     else:
-        all_preds = []
-        all_targets = []
+        Avg_Score = 0
 
     with torch.no_grad():
-        for batch_X, seq_lengths, batch_y in val_loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            seq_lengths = seq_lengths.to(device)
+        for seq, val in zip(seq_val, y_val):
+            seq = seq.to(device)  # 将seq移动到device
+            val = val.clone().detach().to(device)
+            seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度
 
-            # batch_X = batch_X.permute(0, 2, 1)  # [batch_size, channels, seq_len]
+            # 单个验证样本的模型输出
+            seq = seq.permute(0, 2, 1)
+            output = model(seq)
 
-            outputs = model(batch_X)
-
-            if task == "SW":
-                loss = criterion(outputs, batch_y.view(-1, 1))
-                val_loss += loss.item()  # 累加总损失
-                all_preds.extend(outputs.cpu().numpy())
-                all_targets.extend(batch_y.cpu().numpy())
+            if task == "MT":
+                logits = torch.nn.functional.softmax(output, dim=1)
+                # 选出最高的概率
+                max_score = torch.max(logits).item()
+                modulation_type = torch.argmax(output, dim=1) + 1
+                if (modulation_type == (val+1)).item():
+                    correct += 1
+                    list.append(max_score)
             else:
-                loss = criterion(outputs, batch_y)
-                val_loss += loss.item()
-                _, predicted = torch.max(outputs.data, 1)
-                total += batch_y.size(0)
-                correct += (predicted == batch_y).sum().item()
+                # 预测码元宽度
+                predict_SW = output.item()
+                predict_SW = round(predict_SW/0.05)*0.05
+                label = round(val, 2)
+                score_error = np.abs(predict_SW - label)
+                score = calculate_score(score_error)
+                Avg_Score += score
 
     if task == "MT":
-        avg_val_loss = val_loss / len(val_loader)
-        accuracy = 100 * correct / total
-        print(f'验证集上的损失: {avg_val_loss:.4f}, 准确率: {accuracy:.3f}%')
+        accuracy = 100 * correct / len(seq_val)
+        print(f'准确率: {accuracy:.3f}%')
+
+        # 绘制list直方图
+        # 定义直方图区间
+        bins = 10  # 分成 10 个区间
+        range_min, range_max = 0, 1  # 数据范围 [0, 1]
+
+        # 计算直方图数据
+        hist, bin_edges = np.histogram(list, bins=bins, range=(range_min, range_max))
+
+        # 输出每个区间的统计数量
+        print("直方图统计结果：")
+        for i in range(len(hist)):
+            print(f"区间 {bin_edges[i]:.2f} - {bin_edges[i + 1]:.2f} 的数量: {hist[i]}")
+
+        # 绘制直方图
+        plt.hist(list, bins=bins, range=(range_min, range_max), edgecolor='black')
+        plt.xlabel('Prediction Score Range')  # 横轴为分数范围
+        plt.ylabel('Frequency')  # 纵轴为频率
+        plt.title('Histogram of Prediction Scores')  # 标题
+        plt.grid(axis='y')  # 添加网格线
+        plt.show()
+
     elif task == "SW":
-        avg_val_loss = val_loss / len(val_loader)
-        mse = mean_squared_error(all_targets, all_preds)
-        rmse = mean_squared_error(all_targets, all_preds, squared=False)
-        #计算相对误差
-        all_preds = np.array(all_preds).squeeze() #将预测结果降为一维，防止触发广播机制
-        # 对 all_preds 的值进行裁剪，限定范围在 0.2 到 1 之间
-        all_preds = np.clip(all_preds, 0.2, 1.0)
-
-        all_targets = np.array(all_targets)
-        relative_error = np.abs(all_preds - all_targets) / all_targets # all_targets为正数
-
-        mean_relative_error = np.mean(relative_error)
-
-        # 对每个样本的 relative_error 计算得分
-        scores = np.array([calculate_score(re) for re in relative_error])
-        # 计算总得分 (即所有样本得分的平均值)
-        total_score = np.mean(scores)
-
-        print(f'验证集上的损失: {avg_val_loss:.4f}, MeanRelativeError：{mean_relative_error:.4f}, MSE: {mse:.4f}, RMSE: {rmse:.4f}')
-        print(f"总得分: {total_score:.2f}")
+        Avg_Score /= len(seq_val)
+        print(f"总得分: {Avg_Score:.2f}")
 
 if __name__ == "__main__":
 
@@ -244,7 +252,7 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     # 指定根目录
-    root_dir = '../../competition_signal/Big-data-contest-main/data/IQ/'
+    root_dir = './train_data'
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
     # data_dirs = ['8APSK']
 
@@ -264,8 +272,9 @@ if __name__ == "__main__":
         # val_dataset = WaveformDataset(seq_val, y_val)
         # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     elif args.mode == 'test':
-        val_dataset = WaveformDataset(seq_val, y_val)
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+        # val_dataset = WaveformDataset(seq_val, y_val)
+        # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+        pass
     else:
         raise ValueError("无效的模式，请选择 'train' 或 'test'")
 
@@ -296,8 +305,6 @@ if __name__ == "__main__":
         if not args.model_path:
             print("测试模式需要指定模型文件路径，请使用 --model_path 参数。")
             exit(1)
-        test(model, seq_val, criterion, device, args.model_path, args.task)
+        test(model, seq_val, y_val, device, args.model_path, args.task)
 
-"""测试指令
-python main.py --mode test --task SW --network CNNRegressor --model_path log/models/SymbolWidth/CNNRegressor/0.1495_60.81_best_model.pth"""
 

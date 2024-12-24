@@ -59,8 +59,6 @@ def main():
                 correct += 1
                 list.append(max_score)
 
-            # print(f'模型预测调制类型：{modulation_type.item()}, 实际真实label:{real_label}')
-
     accuracy = correct / len(seq_val)
     print(f"准确率为：{accuracy:.4f}")
     return list

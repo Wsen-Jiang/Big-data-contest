@@ -44,7 +44,7 @@ def main():
 
             seq = seq.to(device)  # 将seq移动到device
             val = val.clone().detach().to(device)
-            seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
+            seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度
 
             # 单个验证样本的模型输出
             seq = seq.permute(0, 2, 1)

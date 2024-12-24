@@ -97,7 +97,6 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
         sum_val_loss = 0.0
         if task == "MT":
             correct = 0
-            total = 0
         else:
             mean_score = 0
         with torch.no_grad():
@@ -239,15 +238,15 @@ if __name__ == "__main__":
 
     set_random_seed(42)
     arg_parser = argparse.ArgumentParser("Train or test the model")
-    arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
-    arg_parser.add_argument("--task", type=str, default="SW",
+    arg_parser.add_argument("--mode", type=str, default="test", help="train or test")
+    arg_parser.add_argument("--task", type=str, default="MT",
                             help="MT(ModulationType)、SW(SymbolWidth)")
-    arg_parser.add_argument("--network", type=str, default="CNN_Regressor_LSTM",
+    arg_parser.add_argument("--network", type=str, default="ResBlock_Classifier",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
     arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
     arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
-    arg_parser.add_argument("--model_path", type=str, default="",
+    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/ModulationType/ResBlock_Classifier/67.14_best_model.pth",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
@@ -269,6 +268,7 @@ if __name__ == "__main__":
     if args.mode == 'train':
         train_dataset = WaveformDataset(seq_train, y_train)
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
+        # 使用原始IQ长度作为验证集
         # val_dataset = WaveformDataset(seq_val, y_val)
         # val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
     elif args.mode == 'test':
@@ -295,7 +295,7 @@ if __name__ == "__main__":
         raise ValueError(f"无效的 task 参数: {args.task}")
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=1e-5)
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
     if args.mode == 'train':

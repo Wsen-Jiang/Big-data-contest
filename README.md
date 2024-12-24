@@ -7,8 +7,8 @@
 |-----------------|---------------|------------|----------|-------------|-----------------|
 | CNN*2_Transform | 0.005         | 512        | 60.24    |     | overfitting |
 | CNN*3_LSTM | 0.005 | 1024 |  | 58.49 | overfitting |
-| CNN*3_LSTM      | 0.003         | 2048       | 60.03    |     | overfitting |
-| CNN*3_LSTM      | 0.005         | 2048       | 60.81    |     | overfitting |
+| CNN*3_LSTM      | 0.003         | 2048       | 60.03    |          | overfitting |
+| CNN*3_LSTM      | 0.005         | 2048       | 60.81    | 58.36 | overfitting |
 | CNN*3_GRU       | 0.005         | 4096       | 43.32    |     | overfitting |
 | CNN*2_LSTM      | 0.005         | 2048       | 62.63    | 56.94    | overfitting |
 | CNN*3_LSTM*2            | 0.005         | 2048       | 27.24    |     | 填充循环序列      |
@@ -25,9 +25,9 @@
 
 ## task 3 
 ### experiment result:
-| Model           | Learning Rate | Batch Size | Score | ext |
-|-----------------|---------------|------------|-------|-----|
-| CNN*3_Transform | 0.005         | ***        | ***   | *** |
+| Model                       | Learning Rate | Batch Size | Score  | ext  |
+| --------------------------- | ------------- | ---------- | ------ | ---- |
+| CNN_LSTM_Additive Attention | 0.03          | 1024       | 80.41% | ***  |
 
 ## Leaderboard
 ![Image text](https://github.com/WenSen-Jiang/Big-data-contest/blob/main/fig/leaderboard.png)

@@ -64,20 +64,20 @@ class CollateFunction:
         # sequences = [lowpass_filter_iq(item, cutoff_freq, fs) for item in sequences] # 低通滤波
 
         # 获取序列长度
-        seq_lengths = torch.tensor([len(seq) for seq in sequences], dtype=torch.long)
+        seq_lengths = torch.tensor([256 for seq in sequences], dtype=torch.long)
         
         # 填充全序列
         # padded_sequences = pad_sequence(sequences, batch_first=True, padding_value=0.0)
         
 
-        # 经验：512前向固定长度截取，性价比最高
+        # 经验：256前向固定长度截取，性价比最高
         ml = 256
         padded_sequences = []
         for seq in sequences:
             if len(seq) >= ml:
                 # 随机选择起始索引
                 start_idx = torch.randint(0, len(seq) - ml + 1, (1,)).item()
-                # 截取长度为512的子序列
+                # 截取长度为256的子序列
                 truncated_seq = seq[start_idx : start_idx + ml]
                 padded_sequences.append(truncated_seq)
             else:
@@ -165,7 +165,7 @@ def load_data_from_directories(root_dir, data_dirs,train_mode):
                         sequence = torch.tensor(sequence)
 
                         # 归一化
-                        sequence = normalization(sequence)
+                        # sequence = normalization(sequence)
 
                         # 添加到列表
                         sequences.append(sequence)

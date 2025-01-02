@@ -9,7 +9,6 @@ import importlib
 from utils.dataset import load_data_from_directories, WaveformDataset, CollateFunction
 from utils.utils import show_plot, set_random_seed
 from Criterion.SW_RelativeErrorLoss import RelativeErrorLoss
-from sklearn.metrics import mean_squared_error
 import numpy as np
 from tqdm import tqdm
 from utils.utils import show_plot
@@ -45,7 +44,7 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
     else:
         raise ValueError(f"无效的 task 参数: {task}")
 
-    model_dir = f'log/models/{end_path}/{model.__class__.__name__}'
+    model_dir = f'log/models/{end_path}/{model.module.__class__.__name__}' if isinstance(model, nn.DataParallel) else f'log/models/{end_path}/{model.__class__.__name__}'
     os.makedirs(model_dir, exist_ok=True)
     # record val testing log after each epoch training
     f = open(os.path.join(model_dir, 'training.log'), 'w')
@@ -104,15 +103,17 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
                 seq = seq.to(device)  # 将seq移动到device
                 val = val.clone().detach().to(device)
 
-                seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度，变为 [1, 1727, 2]
+                seq = seq.unsqueeze(0)
 
                 # 单个验证样本的模型输出
                 seq = seq.permute(0, 2, 1)
                 outputs = model(seq)
 
                 if task == "SW":
-                    predict_SW = outputs.item()
-                    score_error = np.abs(predict_SW - val.item())
+                    predict_SW = round(outputs.item(), 2)
+                    predict_SW = round(predict_SW/0.05)*0.05
+                    val = round(val.item(), 2)
+                    score_error = np.abs(predict_SW - val)
                     score = calculate_score(score_error)
                     mean_score += score
                 else:
@@ -125,12 +126,13 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
 
         if task == "SW":
             mean_score /= len(seq_val)
-            print(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f},  Validation Mean Score: {mean_score:.2f}%')
-            f.write(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f}, Validation Mean Score: {mean_score:.2f}%' + '\n')
+            print(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f},  Validation Mean Score: {mean_score:.2f}')
+            f.write(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f}, Validation Mean Score: {mean_score:.2f}' + '\n')
             if mean_score > best_metric:
                 best_metric = mean_score
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
+                print(f"在第{epoch}轮，验证集上最优得分:{best_metric}, 已保存最佳模型")
         else:
             # 验证集准确率
             accuracy = 100 * correct / len(seq_val)
@@ -180,12 +182,8 @@ def test(model, seq_val, y_val, device, model_path, task):
 
     with torch.no_grad():
         for seq, val in zip(seq_val, y_val):
-            seq = seq.to(device)  # 将seq移动到device
             val = val.clone().detach().to(device)
-            seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度
-
-            # 单个验证样本的模型输出
-            seq = seq.permute(0, 2, 1)
+            sequence = torch.tensor(sequence).unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
             output = model(seq)
 
             if task == "MT":
@@ -198,9 +196,9 @@ def test(model, seq_val, y_val, device, model_path, task):
                     list.append(max_score)
             else:
                 # 预测码元宽度
-                predict_SW = output.item()
+                predict_SW = round(output.item(), 2)
                 predict_SW = round(predict_SW/0.05)*0.05
-                label = round(val, 2)
+                label = round(val.item(), 2)
                 score_error = np.abs(predict_SW - label)
                 score = calculate_score(score_error)
                 Avg_Score += score
@@ -238,15 +236,15 @@ if __name__ == "__main__":
 
     set_random_seed(42)
     arg_parser = argparse.ArgumentParser("Train or test the model")
-    arg_parser.add_argument("--mode", type=str, default="test", help="train or test")
-    arg_parser.add_argument("--task", type=str, default="MT",
+    arg_parser.add_argument("--mode", type=str, default="train", help="train or test")
+    arg_parser.add_argument("--task", type=str, default="SW",
                             help="MT(ModulationType)、SW(SymbolWidth)")
-    arg_parser.add_argument("--network", type=str, default="ResBlock_Classifier",
+    arg_parser.add_argument("--network", type=str, default="ResBlock_Regressor",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
+    arg_parser.add_argument("--epochs", type=int, default=200, help="训练轮数")
     arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
-    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/ModulationType/ResBlock_Classifier/67.14_best_model.pth",
+    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/CNN_Regressor_LSTM/SW_94.35_model.pth",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
@@ -263,6 +261,9 @@ if __name__ == "__main__":
     seq_train, seq_val, y_train, y_val = train_test_split(
         sequences, labels, test_size=0.2, random_state=42, 
     )
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
     collate_fn = CollateFunction(args.task)
     # 创建数据集和数据加载器
     if args.mode == 'train':
@@ -295,9 +296,10 @@ if __name__ == "__main__":
         raise ValueError(f"无效的 task 参数: {args.task}")
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=1e-5)
-    device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
     model.to(device)
-
+        # # 使用 DataParallel
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model, device_ids=[0, 1, 2])  # 定义损失函数和优化器
     if args.mode == 'train':
         # 训练模型
         train(model, train_loader, seq_val, y_val, criterion, optimizer, device, args.epochs, args.task)

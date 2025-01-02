@@ -1,6 +1,7 @@
 import os
 import torch
 from models.CNN_Regressor_LSTM import CNN_Regressor_LSTM
+from models.ResBlock_Regressor import ResBlock_Regressor
 from utils.dataset import load_data_from_directories
 from sklearn.model_selection import train_test_split
 import numpy as np
@@ -32,13 +33,16 @@ def main():
     seq_train, seq_val, y_train, y_val = train_test_split(sequences, labels, test_size=0.2, random_state=42)
 
     device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
-    SW_model_path = r'/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/CNN_Regressor_LSTM/SW_best_model.pth'
-    SW_model = CNN_Regressor_LSTM()
+    SW_model_path = r'/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/DataParallel/best_model.pth'
+    SW_model = ResBlock_Regressor()
     SW_model.to(device)
 
     # 加载模型
     if os.path.exists(SW_model_path):
-        SW_model.load_state_dict(torch.load(SW_model_path, map_location=device, weights_only=True))
+        checkpoint = torch.load(SW_model_path, map_location=device, weights_only=True)
+        # 去掉 "module." 前缀
+        checkpoint = {k.replace('module.', ''): v for k, v in checkpoint.items()}
+        SW_model.load_state_dict(checkpoint)
         print(f"模型已成功加载: {SW_model_path}")
     else:
         print(f"模型文件不存在: {SW_model_path}")
@@ -49,17 +53,16 @@ def main():
     all_score = 0
     with torch.no_grad():
         for seq, val in zip(seq_val, y_val):
-            seq = seq.to(device)
-            seq = seq.unsqueeze(0)
+            seq = seq.clone().detach().unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
             val = val.clone().detach().to(device)
 
             # 预测码元宽度
             predict_SW = SW_model(seq).item()
             predict_SW = round(predict_SW/0.05)*0.05
-            label = round(val, 2)
+            label = round(val.item(), 2)
             score_error = np.abs(predict_SW - label)
             score = calculate_score(score_error)
-            print(f"模型预测宽度：{predict_SW:.2f}            真实标签：{val}")
+            # print(f"模型预测宽度：{predict_SW:.2f}            真实标签：{val}")
             all_score += score
 
     accuracy = (all_score / len(seq_val))

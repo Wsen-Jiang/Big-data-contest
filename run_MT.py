@@ -29,6 +29,9 @@ def main():
 
    # 加载模型
     if os.path.exists(MT_model_path):
+        checkpoint = torch.load(MT_model_path, map_location=device,weights_only=True)
+        # 去掉 "module." 前缀
+        checkpoint = {k.replace('module.', ''): v for k, v in checkpoint.items()}
         MT_model.load_state_dict(torch.load(MT_model_path, map_location=device, weights_only=True))
         print(f"模型已成功加载: {MT_model_path}")
     else:
@@ -42,12 +45,9 @@ def main():
     with torch.no_grad():
         for seq, val in zip(seq_val, y_val):
 
-            seq = seq.to(device)  # 将seq移动到device
             val = val.clone().detach().to(device)
-            seq = seq.unsqueeze(0)  # 增加一个 batch_size 维度
+            seq = seq.clone().detach().unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
 
-            # 单个验证样本的模型输出
-            seq = seq.permute(0, 2, 1)
             outputs = MT_model(seq)
 
             logits = torch.nn.functional.softmax(outputs, dim=1)

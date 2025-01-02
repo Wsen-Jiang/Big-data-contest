@@ -242,8 +242,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--network", type=str, default="ResBlock_Regressor",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
     arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=200, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
+    arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
+    arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
     arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/CNN_Regressor_LSTM/SW_94.35_model.pth",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
@@ -262,7 +262,7 @@ if __name__ == "__main__":
         sequences, labels, test_size=0.2, random_state=42, 
     )
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     collate_fn = CollateFunction(args.task)
     # 创建数据集和数据加载器
@@ -299,7 +299,7 @@ if __name__ == "__main__":
     model.to(device)
         # # 使用 DataParallel
     if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model, device_ids=[0, 1, 2])  # 定义损失函数和优化器
+        model = nn.DataParallel(model, device_ids=[1, 2, 3])  # 定义损失函数和优化器
     if args.mode == 'train':
         # 训练模型
         train(model, train_loader, seq_val, y_val, criterion, optimizer, device, args.epochs, args.task)

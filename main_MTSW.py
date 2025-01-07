@@ -241,10 +241,10 @@ if __name__ == "__main__":
                             help="MT(ModulationType)、SW(SymbolWidth)")
     arg_parser.add_argument("--network", type=str, default="ResBlock_Regressor",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
-    arg_parser.add_argument("--lr", type=float, default=0.005, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=100, help="训练轮数")
+    arg_parser.add_argument("--lr", type=float, default=0.003, help="学习率")
+    arg_parser.add_argument("--epochs", type=int, default=200, help="训练轮数")
     arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
-    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/CNN_Regressor_LSTM/SW_94.35_model.pth",
+    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/best_model_64.72.pth",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 

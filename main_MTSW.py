@@ -147,7 +147,7 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
             f.write(f'Epoch [{epoch + 1}/{num_epochs}],  Train Loss: {train_loss:.4f}, Train Accuracy: {accuracy_train:.2f}%, Validation Loss: {valid_mean_loss:.4f}, Validation Accuracy: {accuracy:.2f}%' + '\n')
             if accuracy > best_metric:
                 best_metric = accuracy
-                best_epoch = epoch
+                best_epoch = epoch + 1
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
     print(f"在第{best_epoch}轮，验证集上最优得分:{best_metric}")

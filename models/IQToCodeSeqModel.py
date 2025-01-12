@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import random
 
 class IQToCodeSeqModel(nn.Module):
-    def __init__(self, vocab_size, bos_idx, embed_dim=256, num_heads=8, num_encoder_layers=6, num_decoder_layers=6,
+    def __init__(self, vocab_size, bos_idx, embed_dim=128, num_heads=2, num_encoder_layers=2, num_decoder_layers=2,
                  max_seq_length=450, dropout=0.1):
         super(IQToCodeSeqModel, self).__init__()
         self.bos_idx = bos_idx

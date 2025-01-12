@@ -3,7 +3,77 @@ import torch.nn as nn
 import torch.nn.functional as F
 import random
 
+# ----------------------------
+# 1. Conv1DResidualBlock
+# ----------------------------
+class Conv1DResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=None, dilation=1, use_batchnorm=True,
+                 activation=nn.ReLU):
+        """
+        初始化 Conv1D 残差块。
 
+        参数：
+        - in_channels (int): 输入通道数。
+        - out_channels (int): 输出通道数。
+        - kernel_size (int): 卷积核大小。默认值为3。
+        - stride (int): 卷积步幅。默认值为1。
+        - padding (int): 填充大小。如果为 None，将自动计算以保持长度不变。
+        - dilation (int): 扩张系数。默认值为1。
+        - use_batchnorm (bool): 是否使用批归一化。默认值为True。
+        - activation (nn.Module): 激活函数。默认值为ReLU。
+        """
+        super(Conv1DResidualBlock, self).__init__()
+
+        if padding is None:
+            padding = (kernel_size - 1) // 2 * dilation  # 保持长度不变
+
+        self.use_batchnorm = use_batchnorm
+        self.activation = activation()
+
+        # 主路径
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride,
+                               padding=padding, dilation=dilation, bias=not use_batchnorm)
+        self.bn1 = nn.BatchNorm1d(out_channels) if use_batchnorm else nn.Identity()
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size=kernel_size, stride=1,
+                               padding=padding, dilation=dilation, bias=not use_batchnorm)
+        self.bn2 = nn.BatchNorm1d(out_channels) if use_batchnorm else nn.Identity()
+
+        # 跳跃连接的投影层（如果需要）
+        if in_channels != out_channels or stride != 1:
+            self.projection = nn.Sequential(
+                nn.Conv1d(in_channels, out_channels, kernel_size=1, stride=stride, bias=not use_batchnorm),
+                nn.BatchNorm1d(out_channels) if use_batchnorm else nn.Identity()
+            )
+        else:
+            self.projection = nn.Identity()
+
+    def forward(self, x):
+        """
+        前向传播。
+
+        参数：
+        - x (torch.Tensor): 输入张量，形状为 (batch_size, in_channels, seq_length)。
+
+        返回：
+        - torch.Tensor: 输出张量，形状为 (batch_size, out_channels, new_seq_length)。
+        """
+        identity = self.projection(x)  # 跳跃连接
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.activation(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        out += identity  # 添加跳跃连接
+        out = self.activation(out)
+
+        return out
+
+# ----------------------------
+# 3. BahdanauAttention
+# ----------------------------
 class BahdanauAttention(nn.Module):
     """
     Bahdanau Attention (Additive Attention)
@@ -46,7 +116,9 @@ class BahdanauAttention(nn.Module):
 
         return context, attn_weights
 
-
+# ----------------------------
+# 4. EncoderCNNBiLSTM
+# ----------------------------
 class EncoderCNNBiLSTM(nn.Module):
     """
     编码器：先过CNN，再过双向LSTM
@@ -106,7 +178,9 @@ class EncoderCNNBiLSTM(nn.Module):
         # cell   => (num_layers*2, batch_size, hidden_dim)
         return encoder_outputs, (hidden, cell)
 
-
+# ----------------------------
+# 5. DecoderAttnLSTM
+# ----------------------------
 class DecoderAttnLSTM(nn.Module):
     """
     解码器：单向LSTM + Bahdanau Attention
@@ -144,7 +218,7 @@ class DecoderAttnLSTM(nn.Module):
             mask=mask
         )
 
-        # 拼接 [embedded, context] => (batch_size, 1, embed_dim + enc_hidden_dim*2)
+        # 拼接 [embedded, context] => (batch_size, embed_dim + enc_hidden_dim*2)
         lstm_input = torch.cat([embedded, context], dim=1).unsqueeze(1)
         output, (hidden, cell) = self.lstm(lstm_input, (last_hidden, last_cell))
         # output => (batch_size, 1, dec_hidden_dim)
@@ -179,70 +253,166 @@ class DecoderAttnLSTM(nn.Module):
             pred_token = output_step.argmax(dim=-1)
             # 决定下一个time step的输入
             teacher_force = random.random() < teacher_forcing_ratio
-            input_token = tgt[:, t] if teacher_force else pred_token
+            input_token = tgt[:, t + 1] if teacher_force else pred_token
 
         return outputs
 
-
-class CQ_CNNLSTMAttention(nn.Module):
+# ----------------------------
+# 6. IntegratedEncoder
+# ----------------------------
+class IntegratedEncoder(nn.Module):
     """
-    双层双向 Encoder，双层单向 Decoder 的整体模型示例
+    集成了ResBlock的编码器：ResBlock -> CNN -> BiLSTM
     """
+    def __init__(self,
+                 input_channels=2,
+                 res_in_channels=2,
+                 res_out_channels=32,
+                 res_kernel_size=3,
+                 cnn_out_channels=64,
+                 cnn_kernel_size=3,
+                 hidden_dim=128,
+                 num_layers=2,
+                 dropout=0.1,
+                 use_batchnorm=True):
+        super(IntegratedEncoder, self).__init__()
 
+        # 残差块用于初步特征提取
+        self.res_block = Conv1DResidualBlock(
+            in_channels=res_in_channels,
+            out_channels=res_out_channels,
+            kernel_size=res_kernel_size,
+            stride=1,
+            padding=None,
+            dilation=1,
+            use_batchnorm=use_batchnorm,
+            activation=nn.ReLU
+        )
+
+        # CNN 用于进一步特征提取
+        self.cnn = nn.Sequential(
+            nn.Conv1d(res_out_channels, cnn_out_channels, kernel_size=cnn_kernel_size, padding=1),
+            nn.BatchNorm1d(cnn_out_channels),
+            nn.ReLU()
+        )
+
+        # BiLSTM 编码器
+        self.lstm = nn.LSTM(
+            input_size=cnn_out_channels,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=True
+        )
+
+    def forward(self, src, src_lengths=None):
+        """
+        前向传播
+        src: (batch_size, 2, seq_len)
+        src_lengths: (batch_size,)
+        """
+        # 通过残差块
+        res_out = self.res_block(src)  # (batch_size, res_out_channels, seq_len)
+
+        # 通过CNN
+        cnn_out = self.cnn(res_out)  # (batch_size, cnn_out_channels, seq_len)
+
+        # 调整维度以输入LSTM
+        features = cnn_out.permute(0, 2, 1)  # (batch_size, seq_len, cnn_out_channels)
+
+        if src_lengths is not None:
+            packed_features = nn.utils.rnn.pack_padded_sequence(
+                features,
+                lengths=src_lengths.cpu(),
+                batch_first=True,
+                enforce_sorted=False
+            )
+            packed_outputs, (hidden, cell) = self.lstm(packed_features)
+            encoder_outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_outputs, batch_first=True)
+        else:
+            encoder_outputs, (hidden, cell) = self.lstm(features)
+
+        # encoder_outputs => (batch_size, seq_len, hidden_dim*2)
+        # hidden => (num_layers*2, batch_size, hidden_dim)
+        # cell   => (num_layers*2, batch_size, hidden_dim)
+        return encoder_outputs, (hidden, cell)
+
+# ----------------------------
+# 7. ResBlock_CodeSequence with Correct Hidden State Mapping
+# ----------------------------
+class ResBlock_CodeSequence(nn.Module):
+    """
+    集成了ResBlock的整体模型：ResBlock -> CNN -> BiLSTM -> Attention Decoder
+    """
     def __init__(self,
                  vocab_size,
                  bos_idx,
                  enc_hidden_dim=128,
                  dec_hidden_dim=128,
                  embed_dim=128,
+                 res_in_channels=2,
+                 res_out_channels=32,
+                 res_kernel_size=3,
                  cnn_out_channels=64,
                  enc_layers=2,
                  dec_layers=2,
-                 dropout=0.1):
-        super(CQ_CNNLSTMAttention, self).__init__()
+                 dropout=0.1,
+                 use_batchnorm=True):
+        super(ResBlock_CodeSequence, self).__init__()
         self.bos_idx = bos_idx
-        self.encoder = EncoderCNNBiLSTM(
+        self.encoder = IntegratedEncoder(
             input_channels=2,
+            res_in_channels=res_in_channels,
+            res_out_channels=res_out_channels,
+            res_kernel_size=res_kernel_size,
             cnn_out_channels=cnn_out_channels,
+            cnn_kernel_size=3,
             hidden_dim=enc_hidden_dim,
-            num_layers=enc_layers,  # 2
-            dropout=dropout
+            num_layers=enc_layers,
+            dropout=dropout,
+            use_batchnorm=use_batchnorm
         )
         self.decoder = DecoderAttnLSTM(
             vocab_size=vocab_size,
             embed_dim=embed_dim,
             enc_hidden_dim=enc_hidden_dim,
             dec_hidden_dim=dec_hidden_dim,
-            num_layers=dec_layers,  # 2
+            num_layers=dec_layers,
             dropout=dropout
         )
+        # 添加隐藏状态映射层
+        self.hidden_map = nn.Linear(enc_hidden_dim * 2, dec_hidden_dim)
+        self.cell_map = nn.Linear(enc_hidden_dim * 2, dec_hidden_dim)
 
     def forward(self, src, src_lengths, tgt=None, teacher_forcing_ratio=1.0):
         """
-        训练/推理的统一入口
+        前向传播
         src: (batch_size, 2, src_seq_len)
-        src_lengths: (batch_size,) 源序列长度
-        tgt: (batch_size, tgt_seq_len), 若不为None表示训练/验证
-        teacher_forcing_ratio: float
+        src_lengths: (batch_size,)
+        tgt: (batch_size, tgt_seq_len) 或 None
         """
         # 编码器
         encoder_outputs, (hidden, cell) = self.encoder(src, src_lengths)
-        # Encoder hidden => (num_layers * 2, batch_size, enc_hidden_dim) => (4, B, H)
 
-        # 由于 encoder 有2层双向 => hidden.shape = (4, B, enc_hidden_dim)
-        # Decoder 有2层单向 => 需要 (2, B, dec_hidden_dim)
-        # 每层 forward/backward 做平均再合并：
-        dec_init_hidden_0 = 0.5 * (hidden[0] + hidden[1])  # layer0: forward/backward
-        dec_init_hidden_1 = 0.5 * (hidden[2] + hidden[3])  # layer1: forward/backward
-        dec_init_hidden = torch.stack([dec_init_hidden_0, dec_init_hidden_1], dim=0)
-        # cell 同理
-        dec_init_cell_0 = 0.5 * (cell[0] + cell[1])
-        dec_init_cell_1 = 0.5 * (cell[2] + cell[3])
-        dec_init_cell = torch.stack([dec_init_cell_0, dec_init_cell_1], dim=0)
-        # ----------------
+        # 转换编码器的隐藏状态以匹配解码器
+        num_directions = 2  # BiLSTM
+        num_layers = self.encoder.lstm.num_layers
+        dec_layers = self.decoder.lstm.num_layers
+        dec_hidden_dim = self.decoder.lstm.hidden_size
+
+        # 将BiLSTM的隐藏状态进行线性变换以匹配解码器的隐藏状态
+        # hidden: (num_layers * num_directions, batch_size, enc_hidden_dim)
+        hidden = hidden.view(num_layers, num_directions, src.size(0), -1)  # (num_layers, 2, batch_size, enc_hidden_dim)
+        hidden = torch.cat([hidden[:,0,:,:], hidden[:,1,:,:]], dim=-1)  # (num_layers, batch_size, enc_hidden_dim * 2)
+        hidden = self.hidden_map(hidden)  # (num_layers, batch_size, dec_hidden_dim)
+
+        cell = cell.view(num_layers, num_directions, src.size(0), -1)  # (num_layers, 2, batch_size, enc_hidden_dim)
+        cell = torch.cat([cell[:,0,:,:], cell[:,1,:,:]], dim=-1)  # (num_layers, batch_size, enc_hidden_dim * 2)
+        cell = self.cell_map(cell)  # (num_layers, batch_size, dec_hidden_dim)
 
         if tgt is not None:
-            # 构造encoder_output mask（可选）
+            # 构造mask
             batch_size, max_src_len = encoder_outputs.size(0), encoder_outputs.size(1)
             mask = torch.arange(max_src_len, device=src.device).unsqueeze(0).expand(batch_size, max_src_len)
             mask = mask >= src_lengths.unsqueeze(1)  # True表示padding位置
@@ -250,16 +420,16 @@ class CQ_CNNLSTMAttention(nn.Module):
             outputs = self.decoder(
                 tgt=tgt,
                 encoder_outputs=encoder_outputs,
-                hidden=dec_init_hidden,
-                cell=dec_init_cell,
+                hidden=hidden,
+                cell=cell,
                 teacher_forcing_ratio=teacher_forcing_ratio,
                 mask=mask,
                 bos_idx=self.bos_idx
             )
             return outputs  # (batch_size, tgt_seq_len, vocab_size)
         else:
-            # 推理阶段：逐步生成
-            return self.inference(encoder_outputs, dec_init_hidden, dec_init_cell, src_lengths)
+            # 推理阶段
+            return self.inference(encoder_outputs, hidden, cell, src_lengths)
 
     def inference(self, encoder_outputs, hidden, cell, src_lengths, max_decode_len=450):
         """

@@ -14,6 +14,8 @@ from tqdm import tqdm
 from utils.utils import show_plot
 import matplotlib.pyplot as plt
 import optuna
+import math
+import copy
 
 # 计算码元宽度得分
 def calculate_score(relative_error):
@@ -32,6 +34,7 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
     # 设置最佳指标：码元宽度回归任务以最小化损失为目标，调制类型分类任务以最大化准确率为目标，码序列相似度任务以最大化余弦相似度为目标
     best_metric = 0
     best_epoch = 0
+    best_model_weights = copy.deepcopy(model.state_dict())  # 用于保存最优模型的权重
 
     history_train_loss = []
     history_valid_loss = []
@@ -43,7 +46,8 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
     else:
         raise ValueError(f"无效的 task 参数: {task}")
 
-    model_dir = f'log/models/{end_path}/{model.module.__class__.__name__}' if isinstance(model, nn.DataParallel) else f'log/models/{end_path}/{model.__class__.__name__}'
+    model_name = model.module.__class__.__name__ if isinstance(model, nn.DataParallel) else model.__class__.__name__
+    model_dir = f'log/models/{end_path}/{model_name}'
     os.makedirs(model_dir, exist_ok=True)
     # record val testing log after each epoch training
     f = open(os.path.join(model_dir, 'training.log'), 'w')
@@ -89,7 +93,6 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
         train_loss /= len(train_loader)
         history_train_loss.append(train_loss)
 
-
         # 验证阶段
         model.eval()
         sum_val_loss = 0.0
@@ -106,15 +109,21 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
 
                 # 单个验证样本的模型输出
                 seq = seq.permute(0, 2, 1)
-                outputs = model(seq)
+                outputs = model(seq).item()
 
                 if task == "SW":
-                    predict_SW = round(outputs.item(), 2)
-                    predict_SW = round(predict_SW/0.05)*0.05
+                    if not math.isnan(outputs):
+                        predict_SW = round(outputs, 2)
+                        predict_SW = round(predict_SW / 0.05) * 0.05
+                    else:
+                        print("Warning: predict_SW is NaN after outputs.item(). Assigning default.")
+                        predict_SW = 0.0  # 默认值
+
                     val = round(val.item(), 2)
                     score_error = np.abs(predict_SW - val)
                     score = calculate_score(score_error)
                     mean_score += score
+
                 else:
                     val = val.unsqueeze(0)
                     valid_loss = criterion(outputs, val)
@@ -129,9 +138,10 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
             f.write(f'Epoch [{epoch + 1}/{num_epochs}], , Train Loss: {train_loss:.4f}, Validation Mean Score: {mean_score:.2f}' + '\n')
             if mean_score > best_metric:
                 best_metric = mean_score
-                # 保存最佳模型
-                torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-                print(f"在第{epoch+1}轮，验证集上最优得分:{best_metric}, 已保存最佳模型")
+                best_epoch = epoch
+                # 保存最佳模型参数
+                best_model_weights = copy.deepcopy(model.state_dict())
+                print(f"在第{epoch + 1}轮，验证集上最优得分:{best_metric}")
         else:
             # 验证集准确率
             accuracy = 100 * correct / len(seq_val)
@@ -148,8 +158,9 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
                 best_metric = accuracy
                 best_epoch = epoch
                 # 保存最佳模型
-                torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-    print(f"在第{best_epoch+1}轮，验证集上最优得分:{best_metric}")
+                best_model_weights = copy.deepcopy(model.state_dict())
+                print(f"在第{epoch + 1}轮，验证集上最优得分:{best_metric}")
+    print(f"在第{best_epoch + 1}轮，验证集上最优得分:{best_metric}")
 
     # 保存最终模型
     torch.save(model.state_dict(), os.path.join(model_dir, 'final_model.pth'))
@@ -160,16 +171,43 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
     os.makedirs(save_path, exist_ok=True)
     show_plot(history_train_loss, history_valid_loss,
               f"{save_path}/{model.__class__.__name__}_{args.lr}_{args.batch_size}_{best_metric}.png")
-    return best_metric  #返回最优指标
+    return best_metric, model_dir, best_model_weights  #返回最优指标
 
 def test(model, seq_val, y_val, device, model_path, task):
-    # 加载已保存的模型权重
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-        print(f"模型已成功加载: {model_path}")
-    else:
-        print(f"模型文件不存在: {model_path}")
-        return
+    if not os.path.exists(model_path):
+        print(f"[错误] 模型文件不存在: {model_path}")
+        return False
+
+    try:
+        # 加载权重
+        checkpoint = torch.load(model_path, map_location=device, weights_only=True)
+
+        # 检查权重是否是字典格式
+        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
+
+        # 检查是否需要添加或移除 `module.` 前缀
+        model_keys = set(model.state_dict().keys())
+        state_keys = set(state_dict.keys())
+
+        if all(key.startswith("module.") for key in state_keys) and not any(
+                key.startswith("module.") for key in model_keys):
+            # 权重有 `module.` 前缀，但模型没有
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        elif not any(key.startswith("module.") for key in state_keys) and all(
+                key.startswith("module.") for key in model_keys):
+            # 模型有 `module.` 前缀，但权重没有
+            state_dict = {f"module.{k}": v for k, v in state_dict.items()}
+
+        # 加载状态字典
+        model.load_state_dict(state_dict)
+        print(f"[成功] 模型已成功加载: {model_path}")
+
+    except RuntimeError as e:
+        print(f"[错误] 模型加载失败: {e}")
+        return False
 
     model.eval()
 
@@ -182,7 +220,8 @@ def test(model, seq_val, y_val, device, model_path, task):
     with torch.no_grad():
         for seq, val in zip(seq_val, y_val):
             val = val.clone().detach().to(device)
-            sequence = torch.tensor(sequence).unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
+            seq = seq.clone().detach() if isinstance(seq, torch.Tensor) else torch.tensor(seq)
+            seq = seq.unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
             output = model(seq)
 
             if task == "MT":
@@ -231,7 +270,7 @@ def test(model, seq_val, y_val, device, model_path, task):
         Avg_Score /= len(seq_val)
         print(f"总得分: {Avg_Score:.2f}")
 
-def objective(trial, model, seq_train, seq_val, y_train, y_val, criterion, device, collate_fn, task):
+def objective(trial, model_class, seq_train, seq_val, y_train, y_val, criterion, device, collate_fn, task):
     """
     objective 函数：
       1. 定义超参数搜索空间
@@ -240,7 +279,7 @@ def objective(trial, model, seq_train, seq_val, y_train, y_val, criterion, devic
       4. 训练并验证，返回验证集的指标（这里以 SymbolWidth 的平均得分 mean_score 为例）
     """
     # 超参数搜索空间
-    lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+    lr = trial.suggest_float("lr", 5e-4, 1e-2, log=True)
     batch_size = trial.suggest_categorical("batch_size", [1024, 2048, 4096])
     epochs = trial.suggest_int("epochs", 150, 200, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-4, log=True)
@@ -250,11 +289,26 @@ def objective(trial, model, seq_train, seq_val, y_train, y_val, criterion, devic
     train_dataset = WaveformDataset(seq_train, y_train)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
+    # 初始化模型和优化器
+    model = model_class().to(device)
+
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     # 训练模型
-    best_score = train(model, train_loader, seq_val, y_val, criterion, optimizer, device, epochs, task)
-
+    best_score, model_dir, best_model_weights = train(
+        model,
+        train_loader,
+        seq_val,
+        y_val,
+        criterion,
+        optimizer,
+        device,
+        epochs,
+        task
+    )
+    save_name = f'{trial.number:.0f}_{task}_{best_score}_best_model.pth'
+    torch.save(best_model_weights, os.path.join(model_dir, save_name))
+    print(f"[INFO] 本 trial={trial.number} 的最佳模型已保存到: {save_name}")
     # 返回验证集的指标
     return best_score
 
@@ -282,16 +336,16 @@ if __name__ == "__main__":
     data_dirs = ['8APSK', '8PSK', '8QAM', '16APSK','16QAM','32APSK','32QAM','BPSK','MSK','QPSK']
     # data_dirs = ['8APSK']
 
-    # 读取数据
+
     sequences, labels = load_data_from_directories(root_dir, data_dirs, args.task)
 
     # 划分训练集和验证集
 
     seq_train, seq_val, y_train, y_val = train_test_split(
-        sequences, labels, test_size=0.2, random_state=42, 
+        sequences, labels, test_size=0.2, random_state=42, stratify=labels
     )
 
-    device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
     # 创建数据集和数据加载器
     collate_fn = CollateFunction(args.task)
@@ -300,11 +354,9 @@ if __name__ == "__main__":
     try:
         module = importlib.import_module(f"models.{args.network}")
         model_class = getattr(module, args.network)
-        model = model_class()
     except (ImportError, AttributeError):
         raise ValueError(f"指定的网络 {args.network} 无效或不存在")
 
-    model.to(device)
     # 使用 DataParallel
     # if torch.cuda.device_count() > 1:
     #     model = nn.DataParallel(model, device_ids=[1, 2, 3])  # 定义损失函数和优化器
@@ -323,7 +375,7 @@ if __name__ == "__main__":
         study.optimize(
             lambda trial: objective(
                 trial=trial,
-                model = model,
+                model_class = model_class,
                 seq_train = seq_train,
                 seq_val=seq_val,
                 y_train = y_train,
@@ -355,7 +407,7 @@ if __name__ == "__main__":
             pass
         else:
             raise ValueError("无效的模式，请选择 'train' 或 'test'")
-
+        model = model_class().to(device)
         optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
 
         if args.mode == 'train':

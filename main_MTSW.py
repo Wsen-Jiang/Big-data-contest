@@ -43,8 +43,8 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
         end_path = "SymbolWidth"
     else:
         raise ValueError(f"无效的 task 参数: {task}")
-
-    model_dir = f'log/models/{end_path}/{model.module.__class__.__name__}' if isinstance(model, nn.DataParallel) else f'log/models/{end_path}/{model.__class__.__name__}'
+    model_name = model.module.__class__.__name__ if isinstance(model, nn.DataParallel) else model.__class__.__name__
+    model_dir = f'log/models/{end_path}/{model_name}'
     os.makedirs(model_dir, exist_ok=True)
     # record val testing log after each epoch training
     f = open(os.path.join(model_dir, 'training.log'), 'w')
@@ -131,8 +131,8 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
             if mean_score > best_metric:
                 best_metric = mean_score
                 # 保存最佳模型
-                torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-                print(f"在第{epoch}轮，验证集上最优得分:{best_metric}, 已保存最佳模型")
+                torch.save(model.state_dict(), os.path.join(model_dir, f'{task}_{model_name}_{best_metric}_best_model.pth'))
+                print(f"在第{epoch + 1}轮，验证集上最优得分:{best_metric}, 已保存最佳模型")
         else:
             # 验证集准确率
             accuracy = 100 * correct / len(seq_val)
@@ -149,8 +149,8 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
                 best_metric = accuracy
                 best_epoch = epoch + 1
                 # 保存最佳模型
-                torch.save(model.state_dict(), os.path.join(model_dir, f'best_model.pth'))
-    print(f"在第{best_epoch}轮，验证集上最优得分:{best_metric}")
+                torch.save(model.state_dict(), os.path.join(model_dir, f'{task}_{model_name}_{best_metric}_best_model.pth'))
+    print(f"在第{best_epoch + 1}轮，验证集上最优得分:{best_metric}")
 
     # 保存最终模型
     torch.save(model.state_dict(), os.path.join(model_dir, 'final_model.pth'))
@@ -164,13 +164,40 @@ def train(model, train_loader, seq_val, y_val, criterion, optimizer, device, num
 
 
 def test(model, seq_val, y_val, device, model_path, task):
-    # 加载已保存的模型权重
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-        print(f"模型已成功加载: {model_path}")
-    else:
-        print(f"模型文件不存在: {model_path}")
-        return
+    if not os.path.exists(model_path):
+        print(f"[错误] 模型文件不存在: {model_path}")
+        return False
+
+    try:
+        # 加载权重
+        checkpoint = torch.load(model_path, map_location=device, weights_only=True)
+
+        # 检查权重是否是字典格式
+        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
+
+        # 检查是否需要添加或移除 `module.` 前缀
+        model_keys = set(model.state_dict().keys())
+        state_keys = set(state_dict.keys())
+
+        if all(key.startswith("module.") for key in state_keys) and not any(
+                key.startswith("module.") for key in model_keys):
+            # 权重有 `module.` 前缀，但模型没有
+            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        elif not any(key.startswith("module.") for key in state_keys) and all(
+                key.startswith("module.") for key in model_keys):
+            # 模型有 `module.` 前缀，但权重没有
+            state_dict = {f"module.{k}": v for k, v in state_dict.items()}
+
+        # 加载状态字典
+        model.load_state_dict(state_dict)
+        print(f"[成功] 模型已成功加载: {model_path}")
+
+    except RuntimeError as e:
+        print(f"[错误] 模型加载失败: {e}")
+        return False
 
     model.eval()
 
@@ -183,7 +210,8 @@ def test(model, seq_val, y_val, device, model_path, task):
     with torch.no_grad():
         for seq, val in zip(seq_val, y_val):
             val = val.clone().detach().to(device)
-            sequence = torch.tensor(sequence).unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
+            seq = seq.clone().detach() if isinstance(seq, torch.Tensor) else torch.tensor(seq)
+            seq = seq.unsqueeze(0).permute(0, 2, 1).to(device)  # 数据移动到设备
             output = model(seq)
 
             if task == "MT":
@@ -241,10 +269,10 @@ if __name__ == "__main__":
                             help="MT(ModulationType)、SW(SymbolWidth)")
     arg_parser.add_argument("--network", type=str, default="ResBlock_Regressor",
                             help="选择网络 (例如 CNNClassifier, ResNet, CNN_LSTM_Classifier)")
-    arg_parser.add_argument("--lr", type=float, default=0.003, help="学习率")
-    arg_parser.add_argument("--epochs", type=int, default=200, help="训练轮数")
-    arg_parser.add_argument("--batch_size", type=int, default=2048, help="批次大小")
-    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/SymbolWidth/best_model_64.72.pth",
+    arg_parser.add_argument("--lr", type=float, default=0.0006322389026150766, help="学习率")
+    arg_parser.add_argument("--epochs", type=int, default=250, help="训练轮数")
+    arg_parser.add_argument("--batch_size", type=int, default=1024, help="批次大小")
+    arg_parser.add_argument("--model_path", type=str, default="/mnt/data/JWS/Big-data-contest/log/models/ModulationType/best_model_64.66.pth",
                             help="模型文件路径，用于测试模式")
     args = arg_parser.parse_args()
 
@@ -259,7 +287,7 @@ if __name__ == "__main__":
     # 划分训练集和验证集
 
     seq_train, seq_val, y_train, y_val = train_test_split(
-        sequences, labels, test_size=0.2, random_state=42, 
+        sequences, labels, test_size=0.2, random_state=42, stratify=labels
     )
 
     device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
@@ -295,11 +323,11 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"无效的 task 参数: {args.task}")
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr,weight_decay=6.891512822218648e-06)
     model.to(device)
         # # 使用 DataParallel
-    if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model, device_ids=[1, 2, 3])  # 定义损失函数和优化器
+    # if torch.cuda.device_count() > 1:
+    #     model = nn.DataParallel(model, device_ids=[1, 2, 3])  # 定义损失函数和优化器
     if args.mode == 'train':
         # 训练模型
         train(model, train_loader, seq_val, y_val, criterion, optimizer, device, args.epochs, args.task)

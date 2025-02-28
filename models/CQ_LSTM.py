@@ -19,6 +19,7 @@ class CNNFeatureExtractor(nn.Module):
         self.ln = nn.LayerNorm(embed_dim)
 
     def forward(self, x):
+        x = x.permute(0, 2, 1)  #将（B，L，2）->(B,2,L)
         # x: (B, 2, L)
         x = self.conv1(x)  # (B, 32, L)
         x = self.bn1(x)
